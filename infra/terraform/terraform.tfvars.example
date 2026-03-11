@@ -1,0 +1,29 @@
+# Required variables — copy to terraform.tfvars and fill in values.
+
+aws_region = "us-east-1"
+
+# GitHub App configuration
+github_app_id      = "123456"
+webhook_secret_arn = "arn:aws:secretsmanager:us-east-1:ACCOUNT:secret:jit-runners/webhook-secret"
+private_key_arn    = "arn:aws:secretsmanager:us-east-1:ACCOUNT:secret:jit-runners/private-key"
+
+# Networking
+vpc_id     = "vpc-0123456789abcdef0"
+subnet_ids = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
+
+# EC2
+default_ami           = "ami-0123456789abcdef0" # Amazon Linux 2023
+default_instance_type = "t3.medium"
+
+# Label-to-instance-type mappings (JSON)
+# label_mappings = "[{\"label\":\"gpu\",\"instance_type\":\"g4dn.xlarge\"},{\"label\":\"large\",\"instance_type\":\"c5.2xlarge\"}]"
+
+# Lambda deployment packages
+webhook_lambda_s3_bucket = "my-lambda-deployments"
+webhook_lambda_s3_key    = "jit-runners/v0.1.0/webhook-linux-amd64.zip"
+scaleup_lambda_s3_key    = "jit-runners/v0.1.0/scaleup-linux-amd64.zip"
+scaledown_lambda_s3_key  = "jit-runners/v0.1.0/scaledown-linux-amd64.zip"
+
+# Scale-down thresholds (optional)
+# stale_threshold_minutes = 10
+# max_runner_age_minutes  = 360

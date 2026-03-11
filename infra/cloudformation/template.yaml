@@ -1,0 +1,469 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: jit-runners — On-demand GitHub Actions self-hosted runners (Lambda + EC2 spot)
+
+Parameters:
+  GitHubAppId:
+    Type: String
+    Description: GitHub App ID (numeric).
+
+  LambdaS3Bucket:
+    Type: String
+    Description: S3 bucket containing the Lambda deployment packages.
+
+  WebhookLambdaS3Key:
+    Type: String
+    Description: S3 key for the webhook Lambda zip (e.g. jit-runners/v0.1.0/webhook-linux-amd64.zip).
+
+  ScaleUpLambdaS3Key:
+    Type: String
+    Description: S3 key for the scale-up Lambda zip.
+
+  ScaleDownLambdaS3Key:
+    Type: String
+    Description: S3 key for the scale-down Lambda zip.
+
+  WebhookSecretArn:
+    Type: String
+    Description: ARN of the Secrets Manager secret containing the GitHub App webhook secret.
+
+  PrivateKeySecretArn:
+    Type: String
+    Description: ARN of the Secrets Manager secret containing the GitHub App private key (PEM).
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID where runner EC2 instances will launch.
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnet IDs for runner EC2 instances (private subnets recommended).
+
+  DefaultAMI:
+    Type: AWS::EC2::Image::Id
+    Description: Default AMI ID for runner instances (Amazon Linux 2023 recommended).
+
+  LabelMappings:
+    Type: String
+    Default: "[]"
+    Description: "(Optional) JSON array of label-to-instance-type mappings."
+
+  StaleThresholdMinutes:
+    Type: Number
+    Default: 10
+    Description: Minutes before a pending runner is considered stale.
+
+  MaxRunnerAgeMinutes:
+    Type: Number
+    Default: 360
+    Description: Maximum age in minutes before a running instance is force-terminated.
+
+Resources:
+  # --- DynamoDB ---
+
+  RunnersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-runners"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: runner_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: runner_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-runners"
+
+  # --- SQS ---
+
+  ScaleUpDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-scaleup-dlq"
+      MessageRetentionPeriod: 1209600
+
+  ScaleUpQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-scaleup"
+      VisibilityTimeout: 120
+      MessageRetentionPeriod: 3600
+      ReceiveMessageWaitTimeSeconds: 10
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ScaleUpDLQ.Arn
+        maxReceiveCount: 3
+
+  # --- EC2 Security Group ---
+
+  RunnerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: jit-runners EC2 instances — egress only
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS to GitHub and AWS APIs
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP for package managers
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+          Description: DNS
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-runner"
+
+  # --- EC2 IAM ---
+
+  RunnerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-runner"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SelfTerminate
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ec2:TerminateInstances
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    "ec2:ResourceTag/managed-by": jit-runners
+
+  RunnerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "${AWS::StackName}-runner"
+      Roles:
+        - !Ref RunnerRole
+
+  # --- Webhook Lambda ---
+
+  WebhookLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-webhook-lambda"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: WebhookLambdaPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt ScaleUpQueue.Arn
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref WebhookSecretArn
+                  - !Ref PrivateKeySecretArn
+
+  WebhookFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-webhook"
+      Description: Receives GitHub workflow_job webhooks and enqueues scale-up messages.
+      Runtime: provided.al2023
+      Handler: webhook
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref WebhookLambdaS3Key
+      Timeout: 25
+      MemorySize: 128
+      Role: !GetAtt WebhookLambdaRole.Arn
+      Environment:
+        Variables:
+          GITHUB_APP_ID: !Ref GitHubAppId
+          GITHUB_APP_WEBHOOK_SECRET_ARN: !Ref WebhookSecretArn
+          GITHUB_APP_PRIVATE_KEY_SECRET_ARN: !Ref PrivateKeySecretArn
+          SQS_QUEUE_URL: !Ref ScaleUpQueue
+          DYNAMODB_TABLE_NAME: !Ref RunnersTable
+
+  WebhookLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-webhook"
+      RetentionInDays: 14
+
+  # --- API Gateway ---
+
+  WebhookApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "${AWS::StackName}-webhook"
+      ProtocolType: HTTP
+
+  WebhookApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref WebhookApi
+      StageName: "$default"
+      AutoDeploy: true
+
+  WebhookIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebhookApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt WebhookFunction.Arn
+      PayloadFormatVersion: "2.0"
+
+  WebhookRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebhookApi
+      RouteKey: "POST /webhook"
+      Target: !Sub "integrations/${WebhookIntegration}"
+
+  ApiGatewayLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WebhookFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebhookApi}/*/*"
+
+  # --- Scale-Up Lambda ---
+
+  ScaleUpLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-scaleup-lambda"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ScaleUpLambdaPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt ScaleUpQueue.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt RunnersTable.Arn
+              - Effect: Allow
+                Action:
+                  - ec2:RunInstances
+                  - ec2:CreateTags
+                Resource: "*"
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt RunnerRole.Arn
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref WebhookSecretArn
+                  - !Ref PrivateKeySecretArn
+
+  ScaleUpFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-scaleup"
+      Description: Launches EC2 spot instances as JIT GitHub Actions runners.
+      Runtime: provided.al2023
+      Handler: scaleup
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref ScaleUpLambdaS3Key
+      Timeout: 60
+      MemorySize: 256
+      Role: !GetAtt ScaleUpLambdaRole.Arn
+      Environment:
+        Variables:
+          GITHUB_APP_ID: !Ref GitHubAppId
+          GITHUB_APP_WEBHOOK_SECRET_ARN: !Ref WebhookSecretArn
+          GITHUB_APP_PRIVATE_KEY_SECRET_ARN: !Ref PrivateKeySecretArn
+          SQS_QUEUE_URL: !Ref ScaleUpQueue
+          DYNAMODB_TABLE_NAME: !Ref RunnersTable
+          EC2_SUBNET_IDS: !Join [",", !Ref SubnetIds]
+          EC2_SECURITY_GROUP_ID: !Ref RunnerSecurityGroup
+          EC2_IAM_INSTANCE_PROFILE: !Ref RunnerInstanceProfile
+          EC2_DEFAULT_AMI: !Ref DefaultAMI
+          LABEL_MAPPINGS: !Ref LabelMappings
+
+  ScaleUpLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-scaleup"
+      RetentionInDays: 14
+
+  ScaleUpEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt ScaleUpQueue.Arn
+      FunctionName: !Ref ScaleUpFunction
+      BatchSize: 1
+
+  # --- Scale-Down Lambda ---
+
+  ScaleDownLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-scaledown-lambda"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ScaleDownLambdaPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt RunnersTable.Arn
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:TerminateInstances
+                Resource: "*"
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref WebhookSecretArn
+                  - !Ref PrivateKeySecretArn
+
+  ScaleDownFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-scaledown"
+      Description: Cleans up stale and orphaned runner EC2 instances.
+      Runtime: provided.al2023
+      Handler: scaledown
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref ScaleDownLambdaS3Key
+      Timeout: 60
+      MemorySize: 256
+      Role: !GetAtt ScaleDownLambdaRole.Arn
+      Environment:
+        Variables:
+          GITHUB_APP_ID: !Ref GitHubAppId
+          GITHUB_APP_WEBHOOK_SECRET_ARN: !Ref WebhookSecretArn
+          GITHUB_APP_PRIVATE_KEY_SECRET_ARN: !Ref PrivateKeySecretArn
+          SQS_QUEUE_URL: !Ref ScaleUpQueue
+          DYNAMODB_TABLE_NAME: !Ref RunnersTable
+          STALE_THRESHOLD_MINUTES: !Ref StaleThresholdMinutes
+          MAX_RUNNER_AGE_MINUTES: !Ref MaxRunnerAgeMinutes
+
+  ScaleDownLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-scaledown"
+      RetentionInDays: 14
+
+  # --- EventBridge Scheduler ---
+
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-scheduler"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeScaleDown
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt ScaleDownFunction.Arn
+
+  ScaleDownSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub "${AWS::StackName}-scaledown"
+      ScheduleExpression: "rate(5 minutes)"
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      Target:
+        Arn: !GetAtt ScaleDownFunction.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+
+Outputs:
+  WebhookUrl:
+    Description: Set this as the GitHub App webhook URL (Payload URL).
+    Value: !Sub "${WebhookApi.ApiEndpoint}/webhook"
+    Export:
+      Name: !Sub "${AWS::StackName}-WebhookUrl"
+
+  WebhookLambdaArn:
+    Description: ARN of the webhook Lambda function.
+    Value: !GetAtt WebhookFunction.Arn
+
+  ScaleUpLambdaArn:
+    Description: ARN of the scale-up Lambda function.
+    Value: !GetAtt ScaleUpFunction.Arn
+
+  ScaleDownLambdaArn:
+    Description: ARN of the scale-down Lambda function.
+    Value: !GetAtt ScaleDownFunction.Arn
+
+  DynamoDBTableName:
+    Description: DynamoDB table name for runner state.
+    Value: !Ref RunnersTable
+
+  SQSQueueUrl:
+    Description: SQS queue URL for scale-up messages.
+    Value: !Ref ScaleUpQueue
+
+  RunnerSecurityGroupId:
+    Description: Security group ID for runner EC2 instances.
+    Value: !Ref RunnerSecurityGroup
+
+  RunnerInstanceProfileName:
+    Description: IAM instance profile name for runner EC2 instances.
+    Value: !Ref RunnerInstanceProfile

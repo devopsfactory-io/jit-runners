@@ -1,0 +1,23 @@
+{
+  "action": "completed",
+  "workflow_job": {
+    "id": 123456789,
+    "run_id": 987654321,
+    "name": "build",
+    "labels": ["self-hosted", "linux", "x64"],
+    "runner_name": "jit-123456789",
+    "status": "completed"
+  },
+  "repository": {
+    "id": 111222333,
+    "full_name": "devopsfactory-io/jit-runners",
+    "private": true
+  },
+  "organization": {
+    "id": 444555666,
+    "login": "devopsfactory-io"
+  },
+  "installation": {
+    "id": 12345678
+  }
+}
