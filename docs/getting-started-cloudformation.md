@@ -61,6 +61,14 @@ aws cloudformation deploy \
 
 **Note**: `--capabilities CAPABILITY_NAMED_IAM` is required because the template creates named IAM roles.
 
+**AMI region**: The `DefaultAMI` must exist in the **same AWS region** where you are deploying the stack. If you are using a pre-baked community AMI published from a different region, copy it first:
+
+```bash
+make ami.copy AMI_ID=ami-0123456789abcdef0
+```
+
+This copies the AMI to all distribution regions. Then use the region-specific AMI ID in your stack parameters.
+
 ### Optional Parameters
 
 Add these to `--parameter-overrides` if needed:

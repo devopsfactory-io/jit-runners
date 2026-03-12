@@ -59,17 +59,17 @@ The three Lambda functions share code via `lambda/internal/`:
 ## How does it work?
 
 1. A GitHub App sends `workflow_job` webhooks to an API Gateway endpoint when a workflow job is queued.
-2. The Webhook Lambda validates the HMAC signature, parses the event, and enqueues a message to SQS with a 30-second visibility delay — this gives any already-warm runner a chance to claim the job before a new instance is launched.
-3. The Scale-Up Lambda processes the SQS message, calls the GitHub API to generate a JIT runner registration token, and launches an EC2 spot instance. The instance user-data script installs the runner agent, registers it using the JIT config, and immediately starts accepting jobs.
+2. The Webhook Lambda validates the HMAC signature, parses the event, and enqueues a message to SQS with a 30-second delivery delay — this provides a deduplication window to absorb duplicate webhook deliveries before an instance is launched.
+3. The Scale-Up Lambda processes the SQS message, calls the GitHub API to generate a JIT runner registration token, and launches an EC2 spot instance (falling back to on-demand automatically if spot capacity is unavailable). The instance user-data script configures the runner agent (installing it on stock AMIs, or reusing the pre-baked binary on pre-baked AMIs), registers it using the JIT config, and immediately starts accepting jobs.
 4. After the job completes, the runner agent self-deregisters from GitHub and the instance self-terminates — no manual cleanup needed.
-5. The Scale-Down Lambda fires every 5 minutes via an EventBridge rule. It queries DynamoDB for runner state and terminates any instances that are stale, orphaned, or whose runners have already deregistered.
+5. The Scale-Down Lambda fires every 5 minutes via an EventBridge Scheduler. It queries DynamoDB for runner state and terminates any instances that are stale, orphaned, or whose runners have already deregistered.
 
 ## Why use it?
 
 - **Up to 90% cost savings** - EC2 spot instances cost a fraction of GitHub-hosted runners for equivalent compute.
 - **No idle infrastructure** - Runners launch on demand and terminate after use; you pay only for the seconds a job is running.
 - **Private network access** - Runners launch inside your VPC and can reach private resources (RDS, EKS API, internal registries) that GitHub-hosted runners cannot.
-- **Custom hardware** - Configure instance types and sizes per workflow label (e.g. `runs-on: [self-hosted, c6i.4xlarge]`).
+- **Custom hardware** - Configure instance types and sizes per workflow label (e.g. `runs-on: [self-hosted, c6i.4xlarge]`). The default instance type when no label matches is `t3.large`.
 - **Single-use ephemeral runners** - Each job gets a clean environment with no shared state, no credential leakage, and no leftover artifacts from previous runs.
 - **Serverless control plane** - No servers to maintain or patch. The entire orchestration layer is Lambda, SQS, DynamoDB, and EventBridge.
 

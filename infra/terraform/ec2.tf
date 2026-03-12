@@ -1,3 +1,14 @@
+# --- EC2 Spot Service-Linked Role ---
+#
+# Required for EC2 Spot to function. Without this, RunInstances with
+# InstanceMarketOptions=spot fails with AuthFailure.ServiceLinkedRoleCreationNotPermitted.
+# This resource is idempotent — if the role already exists, Terraform treats it as a no-op.
+
+resource "aws_iam_service_linked_role" "ec2_spot" {
+  aws_service_name = "spot.amazonaws.com"
+  description      = "Allows EC2 Spot to launch, tag, and manage spot instances on behalf of jit-runners."
+}
+
 # --- Security Group for Runner Instances ---
 
 resource "aws_security_group" "runner" {

@@ -124,6 +124,14 @@ Resources:
         - Key: Name
           Value: !Sub "${AWS::StackName}-runner"
 
+  # --- EC2 Spot Service-Linked Role ---
+
+  EC2SpotServiceLinkedRole:
+    Type: AWS::IAM::ServiceLinkedRole
+    Properties:
+      AWSServiceName: spot.amazonaws.com
+      Description: Allows EC2 Spot to launch, tag, and manage spot instances on behalf of jit-runners.
+
   # --- EC2 IAM ---
 
   RunnerRole:
