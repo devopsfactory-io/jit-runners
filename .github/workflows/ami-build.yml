@@ -1,0 +1,105 @@
+name: Build Runner AMI
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_version:
+        description: "GitHub Actions runner version"
+        default: "2.332.0"
+        required: true
+      extra_script:
+        description: "Path to extra setup script (relative to infra/packer/)"
+        default: ""
+        required: false
+      distribute:
+        description: "Copy AMI to all distribution regions (US, EU, SA)"
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths:
+      - "infra/packer/**"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AMI_DISTRIBUTION_REGIONS: >-
+    us-east-1,us-west-1,us-west-2,eu-west-1,eu-west-2,eu-west-3,eu-central-1,eu-north-1,sa-east-1
+
+jobs:
+  build:
+    name: Build AMI
+    runs-on: [self-hosted, medium]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AMI_BUILD_ROLE_ARN }}
+          aws-region: us-east-2
+
+      - name: Setup Packer
+        uses: hashicorp/setup-packer@main
+
+      - name: Packer init
+        working-directory: infra/packer
+        run: packer init .
+
+      - name: Packer validate
+        working-directory: infra/packer
+        run: packer validate -var "runner_version=${{ inputs.runner_version || '2.332.0' }}" .
+
+      - name: Disable block public access for AMIs
+        if: ${{ inputs.distribute == true || inputs.distribute == '' }}
+        run: |
+          echo "Disabling block public access in source region..."
+          aws ec2 disable-image-block-public-access --region us-east-2 || true
+          IFS=',' read -ra REGIONS <<< "${{ env.AMI_DISTRIBUTION_REGIONS }}"
+          for region in "${REGIONS[@]}"; do
+            echo "Disabling block public access in ${region}..."
+            aws ec2 disable-image-block-public-access --region "${region}" || true
+          done
+
+      - name: Packer build
+        working-directory: infra/packer
+        run: |
+          RUNNER_VERSION="${{ inputs.runner_version || '2.332.0' }}"
+          DISTRIBUTE="${{ inputs.distribute || 'true' }}"
+          ARGS="-var runner_version=${RUNNER_VERSION}"
+
+          if [ "${DISTRIBUTE}" = "true" ]; then
+            ARGS="${ARGS} -var ami_regions=[\"us-east-1\",\"us-west-1\",\"us-west-2\",\"eu-west-1\",\"eu-west-2\",\"eu-west-3\",\"eu-central-1\",\"eu-north-1\",\"sa-east-1\"]"
+          fi
+
+          if [ -n "${{ inputs.extra_script }}" ]; then
+            ARGS="${ARGS} -var extra_script=${{ inputs.extra_script }}"
+          fi
+
+          packer build ${ARGS} .
+
+      - name: Extract AMI ID and summary
+        working-directory: infra/packer
+        run: |
+          AMI_ID=$(jq -r '.builds[-1].artifact_id' manifest.json | cut -d: -f2)
+          RUNNER_VERSION="${{ inputs.runner_version || '2.332.0' }}"
+          DISTRIBUTE="${{ inputs.distribute || 'true' }}"
+
+          echo "## AMI Build Complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| ----- | ----- |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| AMI ID (source) | \`${AMI_ID}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Runner Version | ${RUNNER_VERSION} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Source Region | us-east-2 |" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${DISTRIBUTE}" = "true" ]; then
+            echo "| Distributed To | us-east-1, us-west-1, us-west-2, eu-west-1, eu-west-2, eu-west-3, eu-central-1, eu-north-1, sa-east-1 |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "| Distributed To | _(none — source region only)_ |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Use this AMI as \`DefaultAMI\` in CloudFormation or \`default_ami\` in Terraform." >> "$GITHUB_STEP_SUMMARY"

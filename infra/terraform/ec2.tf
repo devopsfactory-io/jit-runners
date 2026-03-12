@@ -5,7 +5,7 @@ resource "aws_security_group" "runner" {
   description = "Security group for jit-runners EC2 instances"
   vpc_id      = var.vpc_id
 
-  # Egress only — runners need outbound HTTPS to GitHub and AWS APIs.
+  # Egress only - runners need outbound HTTPS to GitHub and AWS APIs.
   egress {
     from_port   = 443
     to_port     = 443
@@ -32,7 +32,7 @@ resource "aws_security_group" "runner" {
     description = "DNS"
   }
 
-  # No ingress rules — runners don't need inbound traffic.
+  # No ingress rules - runners don't need inbound traffic.
 
   tags = {
     Name = "${var.project_name}-runner"

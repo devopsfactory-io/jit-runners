@@ -25,6 +25,9 @@ func TestGenerateUserData(t *testing.T) {
 				"JIT_CONFIG=\"encoded-jit-config-string\"",
 				"./run.sh --jitconfig",
 				"terminate-instances",
+				"/opt/jit-runner-prebaked",
+				"dnf install",
+				"pre-baked AMI detected",
 			},
 		},
 		{

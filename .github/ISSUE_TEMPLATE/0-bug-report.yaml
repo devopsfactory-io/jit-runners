@@ -1,0 +1,74 @@
+name: Bug report
+description: File a bug report
+title: "Area: Short description of bug"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report!
+
+        Please try to give your issue a good title. Try using the area where you are having an issue and a brief description. For example:
+        - `Webhook: signature verification fails for push events` or
+        - `ScaleUp: EC2 spot instance not launched when queue message received`
+
+  - type: markdown
+    attributes:
+      value: |
+        **Hint:** Have you tried [searching](https://github.com/devopsfactory-io/jit-runners/issues) for similar issues? Duplicate issues are common.
+
+        **Are you reporting a security vulnerability?** Please report it responsibly (e.g. via GitHub Security Advisories or private contact per the repository's security policy).
+
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you observed.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Did this work before?
+      description: "If this worked before, what jit-runners version (or commit) worked correctly?"
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: How do we reproduce it?
+      placeholder: "Steps to reproduce..."
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Environment (versions)?
+      description: jit-runners version, deployment method (Terraform/CloudFormation), AWS region, and EC2 instance type if relevant.
+      placeholder: "jit-runners version, deployment method, AWS region..."
+      value: |
+        jit-runners:
+        Deployment:
+        AWS region:
+    validations:
+      required: false
+
+  - type: dropdown
+    attributes:
+      label: Deployment method?
+      description: How did you deploy jit-runners?
+      options:
+        - Terraform/OpenTofu
+        - CloudFormation
+        - Other
+        - I don't know
+    validations:
+      required: false

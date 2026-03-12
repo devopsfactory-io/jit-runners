@@ -1,0 +1,72 @@
+# Run the labeler on existing PRs (e.g. to apply current .github/labeler.yml rules to old/merged PRs).
+# Trigger manually: Actions -> "Label old PRs" -> Run workflow.
+name: label-old-prs
+
+on:
+  workflow_dispatch:
+    inputs:
+      state:
+        description: 'PR state to include'
+        required: false
+        default: 'merged'
+        type: choice
+        options:
+          - merged
+          - closed
+          - all
+      limit:
+        description: 'Max number of PRs to process'
+        required: false
+        default: '200'
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  labeler:
+    runs-on: [self-hosted, medium]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Get PR numbers
+        id: prs
+        run: |
+          echo "numbers<<EOF" >> $GITHUB_OUTPUT
+          gh pr list --state "${{ inputs.state }}" --limit "${{ inputs.limit }}" --json number -q '.[].number' >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # actions/labeler reads head/base branch from github.context.payload.pull_request, which is
+      # unset on workflow_dispatch, so it never applies head-branch rules. This step applies the
+      # same rules as .github/labeler.yml to both head branch and PR title; label if either matches.
+      - name: Apply head-branch and title labels
+        run: |
+          pr_list="${{ steps.prs.outputs.numbers }}"
+          for n in $pr_list; do
+            [ -z "$n" ] && continue
+            out=$(gh pr view "$n" --json headRefName,title -q '[.headRefName, .title] | join("\u001f")' 2>/dev/null) || continue
+            head="${out%%$'\x1f'*}"
+            title="${out#*$'\x1f'}"
+            [ -z "$head" ] && continue
+            # breaking-change: head or title contains '!'
+            (echo "$head" | grep -q '!' || echo "$title" | grep -q '!') && gh pr edit "$n" --add-label "breaking-change" 2>/dev/null || true
+            # feature: head or title starts with feat
+            (echo "$head" | grep -qE '^feat' || echo "$title" | grep -qE '^feat') && gh pr edit "$n" --add-label "feature" 2>/dev/null || true
+            # enhancement: head or title starts with enhance
+            (echo "$head" | grep -qE '^enhance' || echo "$title" | grep -qE '^enhance') && gh pr edit "$n" --add-label "enhancement" 2>/dev/null || true
+            # bug: (head or title) starts with fix and does not contain "dep"
+            ( (echo "$head" | grep -qE '^fix' && ! echo "$head" | grep -q 'dep') || (echo "$title" | grep -qE '^fix' && ! echo "$title" | grep -q 'dep') ) && gh pr edit "$n" --add-label "bug" 2>/dev/null || true
+            # github-actions: head or title starts with ci
+            (echo "$head" | grep -qE '^ci' || echo "$title" | grep -qE '^ci') && gh pr edit "$n" --add-label "github-actions" 2>/dev/null || true
+            # dependencies: head or title contains (deps)
+            (echo "$head" | grep -q '(deps)' || echo "$title" | grep -q '(deps)') && gh pr edit "$n" --add-label "dependencies" 2>/dev/null || true
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run labeler on existing PRs
+        uses: actions/labeler@634933edcd8ababfe52f92936142cc22ac488b1b # v6
+        with:
+          pr-number: ${{ steps.prs.outputs.numbers }}

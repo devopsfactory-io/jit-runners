@@ -13,16 +13,17 @@ This guide walks through deploying jit-runners using the OpenTofu/Terraform conf
 
 ## 1. Build Lambda Binaries
 
-Build the three Lambda functions from source:
+Build and zip the three Lambda functions from source:
 
 ```bash
-make lambda.build
+make lambda.zip
 ```
 
-This produces three zip files in `lambda/dist/`:
-- `webhook.zip`
-- `scaleup.zip`
-- `scaledown.zip`
+This produces three zip files in `bin/`:
+
+- `bin/webhook.zip`
+- `bin/scaleup.zip`
+- `bin/scaledown.zip`
 
 Alternatively, download pre-built binaries from a [GitHub Release](https://github.com/devopsfactory-io/jit-runners/releases).
 
@@ -32,9 +33,9 @@ Alternatively, download pre-built binaries from a [GitHub Release](https://githu
 export LAMBDA_BUCKET="your-lambda-bucket"
 export VERSION="v0.1.0"
 
-aws s3 cp lambda/dist/webhook.zip "s3://${LAMBDA_BUCKET}/jit-runners/${VERSION}/webhook.zip"
-aws s3 cp lambda/dist/scaleup.zip "s3://${LAMBDA_BUCKET}/jit-runners/${VERSION}/scaleup.zip"
-aws s3 cp lambda/dist/scaledown.zip "s3://${LAMBDA_BUCKET}/jit-runners/${VERSION}/scaledown.zip"
+aws s3 cp bin/webhook.zip "s3://${LAMBDA_BUCKET}/jit-runners/${VERSION}/webhook.zip"
+aws s3 cp bin/scaleup.zip "s3://${LAMBDA_BUCKET}/jit-runners/${VERSION}/scaleup.zip"
+aws s3 cp bin/scaledown.zip "s3://${LAMBDA_BUCKET}/jit-runners/${VERSION}/scaledown.zip"
 ```
 
 ## 3. Configure Variables

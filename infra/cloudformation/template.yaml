@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: jit-runners — On-demand GitHub Actions self-hosted runners (Lambda + EC2 spot)
+Description: jit-runners - On-demand GitHub Actions self-hosted runners (Lambda + EC2 spot)
 
 Parameters:
   GitHubAppId:
@@ -102,7 +102,7 @@ Resources:
   RunnerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: jit-runners EC2 instances — egress only
+      GroupDescription: jit-runners EC2 instances - egress only
       VpcId: !Ref VpcId
       SecurityGroupEgress:
         - IpProtocol: tcp

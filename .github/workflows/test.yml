@@ -12,7 +12,7 @@ permissions:
 jobs:
   test:
     name: Test & Lint
-    runs-on: [self-hosted, medium]
+    runs-on: [self-hosted, large]
     defaults:
       run:
         working-directory: lambda
@@ -37,7 +37,7 @@ jobs:
 
   lint:
     name: Lint
-    runs-on: [self-hosted, medium]
+    runs-on: [self-hosted, large]
     steps:
       - uses: actions/checkout@v4
 

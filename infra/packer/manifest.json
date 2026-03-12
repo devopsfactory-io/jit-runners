@@ -1,0 +1,14 @@
+{
+  "builds": [
+    {
+      "name": "jit-runner",
+      "builder_type": "amazon-ebs",
+      "build_time": 1773292589,
+      "files": null,
+      "artifact_id": "us-east-2:ami-054a333b01986bcf5",
+      "packer_run_uuid": "ad1b4f07-a4d8-816e-9894-942db7e1d8df",
+      "custom_data": null
+    }
+  ],
+  "last_run_uuid": "ad1b4f07-a4d8-816e-9894-942db7e1d8df"
+}

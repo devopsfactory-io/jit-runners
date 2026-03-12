@@ -21,20 +21,27 @@ REGION=$(curl -sf -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" http://169.254.16
 echo "=== jit-runners: configuring ephemeral runner on ${INSTANCE_ID} (${REGION}) ==="
 echo "Runner version: ${RUNNER_VERSION}"
 
-# Install runner dependencies (libicu required by .NET runtime)
-dnf install -y libicu lttng-ust openssl-libs krb5-libs zlib
-
-# Create runner user
-useradd -m -s /bin/bash runner || true
-
-# Download and extract runner
-cd /home/runner
-mkdir -p actions-runner && cd actions-runner
-curl -sL -o runner.tar.gz "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
-tar xzf runner.tar.gz
-
-# Set ownership
-chown -R runner:runner /home/runner/actions-runner
+if [ -f /opt/jit-runner-prebaked ]; then
+    PREBAKED_VERSION=$(cat /opt/jit-runner-prebaked)
+    echo "=== jit-runners: pre-baked AMI detected (runner v${PREBAKED_VERSION}) ==="
+    if [ "${PREBAKED_VERSION}" != "${RUNNER_VERSION}" ]; then
+        echo "=== jit-runners: version mismatch, downloading runner v${RUNNER_VERSION} ==="
+        cd /home/runner/actions-runner
+        curl -sL -o runner.tar.gz "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
+        tar xzf runner.tar.gz
+        rm -f runner.tar.gz
+        chown -R runner:runner /home/runner/actions-runner
+    fi
+else
+    echo "=== jit-runners: stock AMI, installing dependencies ==="
+    dnf install -y libicu lttng-ust openssl-libs krb5-libs zlib
+    useradd -m -s /bin/bash runner || true
+    cd /home/runner
+    mkdir -p actions-runner && cd actions-runner
+    curl -sL -o runner.tar.gz "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
+    tar xzf runner.tar.gz
+    chown -R runner:runner /home/runner/actions-runner
+fi
 
 # Start the runner with JIT config (runs one job, then exits)
 echo "Starting runner with JIT config..."
