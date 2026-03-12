@@ -50,7 +50,10 @@ func installationTokenWithBase(ctx context.Context, appID, privateKeyPEM string,
 	if err != nil {
 		return "", fmt.Errorf("parse private key: %w", err)
 	}
-	appIDNum, _ := strconv.ParseInt(appID, 10, 64)
+	appIDNum, err := strconv.ParseInt(appID, 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("parse app ID %q: %w", appID, err)
+	}
 	now := time.Now()
 	claims := jwt.MapClaims{
 		"iat": now.Unix(),
@@ -78,7 +81,7 @@ func installationTokenWithBase(ctx context.Context, appID, privateKeyPEM string,
 	if err != nil {
 		return "", fmt.Errorf("request installation token: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
 		return "", fmt.Errorf("installation token: status %d", resp.StatusCode)
 	}
@@ -127,10 +130,13 @@ func (c *Client) GenerateJITConfig(ctx context.Context, ownerRepo string, name s
 	if err != nil {
 		return nil, fmt.Errorf("request JIT config: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
 		const maxBody = 500
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+		b, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+		if err != nil {
+			return nil, fmt.Errorf("generate JIT config: status %d (failed to read body: %w)", resp.StatusCode, err)
+		}
 		if len(b) > 0 {
 			return nil, fmt.Errorf("generate JIT config: status %d: %s", resp.StatusCode, bytes.TrimSpace(b))
 		}
