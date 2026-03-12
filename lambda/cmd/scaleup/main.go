@@ -83,7 +83,7 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, launcher *ec2.Lau
 	ghClient := github.NewClient(token)
 	runnerName := fmt.Sprintf("jit-%d", msg.JobID)
 	customLabels := webhook.CustomLabels(msg.Labels)
-	jitCfg, err := ghClient.GenerateJITConfig(ctx, msg.RepositoryFull, runnerName, customLabels)
+	jitCfg, err := ghClient.GenerateJITConfig(ctx, msg.RepositoryFull, runnerName, msg.Labels)
 	if err != nil {
 		return fmt.Errorf("generate JIT config: %w", err)
 	}
