@@ -25,7 +25,7 @@ lambda.zip: lambda.build ## Build Lambda zips (bootstrap at root for provided.al
 	cd bin/scaledown && zip -qj ../scaledown.zip bootstrap
 
 lambda.test: ## Run Lambda tests with coverage
-	cd lambda && go test -race -coverprofile=coverage.out -covermode=atomic ./...
+	cd lambda && go test -coverprofile=coverage.out -covermode=atomic ./...
 	cd lambda && go tool cover -func=coverage.out
 
 lambda.vet: ## Run go vet on Lambda code

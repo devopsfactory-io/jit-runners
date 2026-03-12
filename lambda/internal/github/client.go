@@ -81,7 +81,7 @@ func installationTokenWithBase(ctx context.Context, appID, privateKeyPEM string,
 	if err != nil {
 		return "", fmt.Errorf("request installation token: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close() //nolint:errcheck // best-effort close
 	if resp.StatusCode != http.StatusCreated {
 		return "", fmt.Errorf("installation token: status %d", resp.StatusCode)
 	}
@@ -130,7 +130,7 @@ func (c *Client) GenerateJITConfig(ctx context.Context, ownerRepo string, name s
 	if err != nil {
 		return nil, fmt.Errorf("request JIT config: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close() //nolint:errcheck // best-effort close
 	if resp.StatusCode != http.StatusCreated {
 		const maxBody = 500
 		b, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
