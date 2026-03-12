@@ -1,4 +1,4 @@
-# jit-runners — On-demand GitHub Actions self-hosted runners
+# jit-runners - On-demand GitHub Actions self-hosted runners
 #
 # This module deploys:
 # - API Gateway (webhook endpoint)

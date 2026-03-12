@@ -21,7 +21,7 @@ import (
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/webhook"
 )
 
-const defaultRunnerVersion = "2.321.0"
+const defaultRunnerVersion = "2.332.0"
 
 var (
 	cfgOnce sync.Once
@@ -83,7 +83,7 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, launcher *ec2.Lau
 	ghClient := github.NewClient(token)
 	runnerName := fmt.Sprintf("jit-%d", msg.JobID)
 	customLabels := webhook.CustomLabels(msg.Labels)
-	jitCfg, err := ghClient.GenerateJITConfig(ctx, msg.RepositoryFull, runnerName, customLabels)
+	jitCfg, err := ghClient.GenerateJITConfig(ctx, msg.RepositoryFull, runnerName, msg.Labels)
 	if err != nil {
 		return fmt.Errorf("generate JIT config: %w", err)
 	}
@@ -153,7 +153,7 @@ func resolveInstanceType(cfg *appconfig.Config, labels []string) string {
 			}
 		}
 	}
-	return "t3.medium" // default instance type
+	return "t3.large" // default instance type
 }
 
 func resolveAMI(cfg *appconfig.Config, labels []string) string {

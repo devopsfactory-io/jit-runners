@@ -1,3 +1,14 @@
+# --- EC2 Spot Service-Linked Role ---
+#
+# Required for EC2 Spot to function. Without this, RunInstances with
+# InstanceMarketOptions=spot fails with AuthFailure.ServiceLinkedRoleCreationNotPermitted.
+# This resource is idempotent — if the role already exists, Terraform treats it as a no-op.
+
+resource "aws_iam_service_linked_role" "ec2_spot" {
+  aws_service_name = "spot.amazonaws.com"
+  description      = "Allows EC2 Spot to launch, tag, and manage spot instances on behalf of jit-runners."
+}
+
 # --- Security Group for Runner Instances ---
 
 resource "aws_security_group" "runner" {
@@ -5,7 +16,7 @@ resource "aws_security_group" "runner" {
   description = "Security group for jit-runners EC2 instances"
   vpc_id      = var.vpc_id
 
-  # Egress only — runners need outbound HTTPS to GitHub and AWS APIs.
+  # Egress only - runners need outbound HTTPS to GitHub and AWS APIs.
   egress {
     from_port   = 443
     to_port     = 443
@@ -32,7 +43,7 @@ resource "aws_security_group" "runner" {
     description = "DNS"
   }
 
-  # No ingress rules — runners don't need inbound traffic.
+  # No ingress rules - runners don't need inbound traffic.
 
   tags = {
     Name = "${var.project_name}-runner"

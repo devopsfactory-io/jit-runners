@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 )
@@ -38,9 +39,9 @@ func NewCleaner(store *Store, ec2 EC2Terminator, staleMinutes, maxAgeMinutes int
 
 // CleanupResult summarizes the cleanup operation.
 type CleanupResult struct {
-	StaleTerminated   int
-	OrphanTerminated  int
-	Errors            int
+	StaleTerminated  int
+	OrphanTerminated int
+	Errors           int
 }
 
 // Run executes the cleanup logic:
@@ -104,8 +105,14 @@ func (c *Cleaner) Run(ctx context.Context) (*CleanupResult, error) {
 	}
 	knownIDs := make(map[string]bool)
 	allRecords := append(pending, running...)
-	completed, _ := c.store.ListByStatus(ctx, StatusCompleted)
-	failed, _ := c.store.ListByStatus(ctx, StatusFailed)
+	completed, err := c.store.ListByStatus(ctx, StatusCompleted)
+	if err != nil {
+		return result, fmt.Errorf("list completed runners: %w", err)
+	}
+	failed, err := c.store.ListByStatus(ctx, StatusFailed)
+	if err != nil {
+		return result, fmt.Errorf("list failed runners: %w", err)
+	}
 	allRecords = append(allRecords, completed...)
 	allRecords = append(allRecords, failed...)
 	for _, r := range allRecords {

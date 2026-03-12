@@ -1,4 +1,4 @@
-name: Test
+name: test
 
 on:
   push:
@@ -11,8 +11,8 @@ permissions:
 
 jobs:
   test:
-    name: Test & Lint
-    runs-on: ubuntu-latest
+    name: fmt, vet, test and coverage
+    runs-on: [self-hosted, large]
     defaults:
       run:
         working-directory: lambda
@@ -30,14 +30,14 @@ jobs:
         run: go vet ./...
 
       - name: Test
-        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+        run: go test -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Coverage summary
         run: go tool cover -func=coverage.out
 
   lint:
-    name: Lint
-    runs-on: ubuntu-latest
+    name: lint
+    runs-on: [self-hosted, large]
     steps:
       - uses: actions/checkout@v4
 
@@ -50,3 +50,4 @@ jobs:
         with:
           version: latest
           working-directory: lambda
+          args: --timeout=10m

@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: jit-runners — On-demand GitHub Actions self-hosted runners (Lambda + EC2 spot)
+Description: jit-runners - On-demand GitHub Actions self-hosted runners (Lambda + EC2 spot)
 
 Parameters:
   GitHubAppId:
@@ -102,7 +102,7 @@ Resources:
   RunnerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: jit-runners EC2 instances — egress only
+      GroupDescription: jit-runners EC2 instances - egress only
       VpcId: !Ref VpcId
       SecurityGroupEgress:
         - IpProtocol: tcp
@@ -123,6 +123,14 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-runner"
+
+  # --- EC2 Spot Service-Linked Role ---
+
+  EC2SpotServiceLinkedRole:
+    Type: AWS::IAM::ServiceLinkedRole
+    Properties:
+      AWSServiceName: spot.amazonaws.com
+      Description: Allows EC2 Spot to launch, tag, and manage spot instances on behalf of jit-runners.
 
   # --- EC2 IAM ---
 
@@ -307,7 +315,7 @@ Resources:
         S3Bucket: !Ref LambdaS3Bucket
         S3Key: !Ref ScaleUpLambdaS3Key
       Timeout: 60
-      MemorySize: 256
+      MemorySize: 128
       Role: !GetAtt ScaleUpLambdaRole.Arn
       Environment:
         Variables:
@@ -382,7 +390,7 @@ Resources:
         S3Bucket: !Ref LambdaS3Bucket
         S3Key: !Ref ScaleDownLambdaS3Key
       Timeout: 60
-      MemorySize: 256
+      MemorySize: 128
       Role: !GetAtt ScaleDownLambdaRole.Arn
       Environment:
         Variables:

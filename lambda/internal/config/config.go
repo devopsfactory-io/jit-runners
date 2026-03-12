@@ -29,13 +29,13 @@ type Config struct {
 	LabelMappings []LabelMapping
 
 	// EC2 configuration.
-	SubnetIDs       []string
-	SecurityGroupID string
+	SubnetIDs          []string
+	SecurityGroupID    string
 	IAMInstanceProfile string
-	DefaultAMI      string
+	DefaultAMI         string
 
 	// Scale-down configuration.
-	MaxRunnerAgeMinutes  int
+	MaxRunnerAgeMinutes   int
 	StaleThresholdMinutes int
 }
 

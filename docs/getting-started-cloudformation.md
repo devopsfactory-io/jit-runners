@@ -1,9 +1,11 @@
 # Getting Started with CloudFormation
 
 ## Overview
+
 This guide walks through deploying jit-runners using the CloudFormation template in `infra/cloudformation/template.yaml`.
 
 ## Prerequisites
+
 - AWS account with permissions to create Lambda, API Gateway, SQS, DynamoDB, EC2, IAM, EventBridge, and CloudWatch resources
 - AWS CLI installed and configured with credentials
 - A GitHub App configured for jit-runners (see [GitHub App Setup](github-app-setup.md))
@@ -12,16 +14,17 @@ This guide walks through deploying jit-runners using the CloudFormation template
 
 ## 1. Build Lambda Binaries
 
-Build the three Lambda functions from source:
+Build and zip the three Lambda functions from source:
 
 ```bash
-make lambda.build
+make lambda.zip
 ```
 
-This produces three zip files in `lambda/dist/`:
-- `webhook.zip`
-- `scaleup.zip`
-- `scaledown.zip`
+This produces three zip files in `bin/`:
+
+- `bin/webhook.zip`
+- `bin/scaleup.zip`
+- `bin/scaledown.zip`
 
 Alternatively, download pre-built binaries from a [GitHub Release](https://github.com/devopsfactory-io/jit-runners/releases).
 
@@ -31,9 +34,9 @@ Alternatively, download pre-built binaries from a [GitHub Release](https://githu
 export LAMBDA_BUCKET="your-lambda-bucket"
 export VERSION="v0.1.0"
 
-aws s3 cp lambda/dist/webhook.zip "s3://${LAMBDA_BUCKET}/jit-runners/${VERSION}/webhook.zip"
-aws s3 cp lambda/dist/scaleup.zip "s3://${LAMBDA_BUCKET}/jit-runners/${VERSION}/scaleup.zip"
-aws s3 cp lambda/dist/scaledown.zip "s3://${LAMBDA_BUCKET}/jit-runners/${VERSION}/scaledown.zip"
+aws s3 cp bin/webhook.zip "s3://${LAMBDA_BUCKET}/jit-runners/${VERSION}/webhook.zip"
+aws s3 cp bin/scaleup.zip "s3://${LAMBDA_BUCKET}/jit-runners/${VERSION}/scaleup.zip"
+aws s3 cp bin/scaledown.zip "s3://${LAMBDA_BUCKET}/jit-runners/${VERSION}/scaledown.zip"
 ```
 
 ## 3. Deploy the Stack
@@ -58,6 +61,14 @@ aws cloudformation deploy \
 
 **Note**: `--capabilities CAPABILITY_NAMED_IAM` is required because the template creates named IAM roles.
 
+**AMI region**: The `DefaultAMI` must exist in the **same AWS region** where you are deploying the stack. If you are using a pre-baked community AMI published from a different region, copy it first:
+
+```bash
+make ami.copy AMI_ID=ami-0123456789abcdef0
+```
+
+This copies the AMI to all distribution regions. Then use the region-specific AMI ID in your stack parameters.
+
 ### Optional Parameters
 
 Add these to `--parameter-overrides` if needed:
@@ -79,7 +90,7 @@ aws cloudformation describe-stacks \
 
 Go to your GitHub App settings and set the **Webhook URL** to the value from step 4. It will look like:
 
-```
+```text
 https://xxxxxxxxxx.execute-api.us-east-1.amazonaws.com/webhook
 ```
 
@@ -117,6 +128,7 @@ aws cloudformation describe-stacks \
 ```
 
 Available outputs:
+
 | Output | Description |
 |--------|-------------|
 | WebhookUrl | API Gateway endpoint for GitHub webhooks |
@@ -163,10 +175,13 @@ This terminates all managed resources including any running EC2 instances.
 ## Troubleshooting
 
 ### Stack creation fails with IAM error
+
 Ensure you include `--capabilities CAPABILITY_NAMED_IAM` in the deploy command.
 
 ### Lambda function errors
+
 Check CloudWatch logs:
+
 ```bash
 aws logs tail /aws/lambda/jit-runners-webhook --follow
 aws logs tail /aws/lambda/jit-runners-scaleup --follow
@@ -174,6 +189,7 @@ aws logs tail /aws/lambda/jit-runners-scaledown --follow
 ```
 
 ### EC2 instances not launching
+
 - Verify the VPC ID and subnet IDs are correct and the subnets have internet access (NAT Gateway for private subnets)
 - Check the AMI ID is valid in your region
 - Verify the security group allows outbound HTTPS (port 443) -- the template configures this by default
