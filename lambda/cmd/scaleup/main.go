@@ -153,7 +153,7 @@ func resolveInstanceType(cfg *appconfig.Config, labels []string) string {
 			}
 		}
 	}
-	return "t3.medium" // default instance type
+	return "t3.large" // default instance type
 }
 
 func resolveAMI(cfg *appconfig.Config, labels []string) string {

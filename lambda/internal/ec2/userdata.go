@@ -10,10 +10,6 @@ import (
 const userdataTemplate = `#!/bin/bash
 set -euo pipefail
 
-# jit-runners: EC2 user-data script for ephemeral GitHub Actions runner
-# All output goes to /var/log/jit-runner.log and stdout for cloud-init
-exec > >(tee -a /var/log/jit-runner.log) 2>&1
-
 RUNNER_VERSION="{{.RunnerVersion}}"
 JIT_CONFIG="{{.JITConfig}}"
 
@@ -45,9 +41,6 @@ echo "Starting runner with JIT config..."
 su - runner -c "cd /home/runner/actions-runner && ./run.sh --jitconfig '${JIT_CONFIG}'" 2>&1
 RUNNER_EXIT=$?
 echo "=== jit-runners: runner exited with code ${RUNNER_EXIT} ==="
-
-# Upload log to S3 before terminating (best-effort)
-aws s3 cp /var/log/jit-runner.log "s3://jit-runners-lambda-s3/logs/${INSTANCE_ID}.log" --region "${REGION}" || true
 
 echo "=== jit-runners: terminating instance ==="
 aws ec2 terminate-instances --instance-ids "${INSTANCE_ID}" --region "${REGION}" || true
