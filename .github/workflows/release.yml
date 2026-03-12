@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: [self-hosted, large]
+    runs-on: [self-hosted, release]
     steps:
       - uses: actions/checkout@v4
         with:
