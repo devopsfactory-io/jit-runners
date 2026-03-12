@@ -307,7 +307,7 @@ Resources:
         S3Bucket: !Ref LambdaS3Bucket
         S3Key: !Ref ScaleUpLambdaS3Key
       Timeout: 60
-      MemorySize: 256
+      MemorySize: 128
       Role: !GetAtt ScaleUpLambdaRole.Arn
       Environment:
         Variables:
@@ -382,7 +382,7 @@ Resources:
         S3Bucket: !Ref LambdaS3Bucket
         S3Key: !Ref ScaleDownLambdaS3Key
       Timeout: 60
-      MemorySize: 256
+      MemorySize: 128
       Role: !GetAtt ScaleDownLambdaRole.Arn
       Environment:
         Variables:
