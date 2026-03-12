@@ -34,8 +34,8 @@ func TestLoad_RequiredFields(t *testing.T) {
 		{
 			name: "missing webhook secret",
 			env: map[string]string{
-				"GITHUB_APP_ID":      "12345",
-				"SQS_QUEUE_URL":      "https://sqs.us-east-1.amazonaws.com/123/queue",
+				"GITHUB_APP_ID":       "12345",
+				"SQS_QUEUE_URL":       "https://sqs.us-east-1.amazonaws.com/123/queue",
 				"DYNAMODB_TABLE_NAME": "runners",
 			},
 			errMsg: "webhook secret is required (GITHUB_APP_WEBHOOK_SECRET or GITHUB_APP_WEBHOOK_SECRET_ARN)",
@@ -43,10 +43,10 @@ func TestLoad_RequiredFields(t *testing.T) {
 		{
 			name: "missing private key",
 			env: map[string]string{
-				"GITHUB_APP_ID":              "12345",
-				"SQS_QUEUE_URL":              "https://sqs.us-east-1.amazonaws.com/123/queue",
-				"DYNAMODB_TABLE_NAME":         "runners",
-				"GITHUB_APP_WEBHOOK_SECRET":   "secret",
+				"GITHUB_APP_ID":             "12345",
+				"SQS_QUEUE_URL":             "https://sqs.us-east-1.amazonaws.com/123/queue",
+				"DYNAMODB_TABLE_NAME":       "runners",
+				"GITHUB_APP_WEBHOOK_SECRET": "secret",
 			},
 			errMsg: "private key is required (GITHUB_APP_PRIVATE_KEY or GITHUB_APP_PRIVATE_KEY_SECRET_ARN)",
 		},

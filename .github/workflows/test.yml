@@ -50,3 +50,4 @@ jobs:
         with:
           version: latest
           working-directory: lambda
+          args: --timeout=10m

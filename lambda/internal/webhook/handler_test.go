@@ -8,11 +8,11 @@ import (
 
 func TestParse(t *testing.T) {
 	tests := []struct {
-		name        string
-		fixture     string
-		wantAction  string
-		wantScale   bool
-		wantErr     bool
+		name       string
+		fixture    string
+		wantAction string
+		wantScale  bool
+		wantErr    bool
 	}{
 		{
 			name:       "queued event triggers scaling",

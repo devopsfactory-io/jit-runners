@@ -38,9 +38,9 @@ func NewCleaner(store *Store, ec2 EC2Terminator, staleMinutes, maxAgeMinutes int
 
 // CleanupResult summarizes the cleanup operation.
 type CleanupResult struct {
-	StaleTerminated   int
-	OrphanTerminated  int
-	Errors            int
+	StaleTerminated  int
+	OrphanTerminated int
+	Errors           int
 }
 
 // Run executes the cleanup logic:

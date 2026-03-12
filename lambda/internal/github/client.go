@@ -93,8 +93,8 @@ func installationTokenWithBase(ctx context.Context, appID, privateKeyPEM string,
 
 // JITRunnerConfig holds the response from the JIT runner config generation API.
 type JITRunnerConfig struct {
-	RunnerID     int64  `json:"runner_id"`
-	EncodedJIT   string `json:"encoded_jit_config"`
+	RunnerID   int64  `json:"runner_id"`
+	EncodedJIT string `json:"encoded_jit_config"`
 }
 
 // GenerateJITConfig requests a just-in-time runner configuration from GitHub.
