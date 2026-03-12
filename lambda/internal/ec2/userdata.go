@@ -11,12 +11,22 @@ const userdataTemplate = `#!/bin/bash
 set -euo pipefail
 
 # jit-runners: EC2 user-data script for ephemeral GitHub Actions runner
+# All output goes to /var/log/jit-runner.log and stdout for cloud-init
+exec > >(tee -a /var/log/jit-runner.log) 2>&1
 
 RUNNER_VERSION="{{.RunnerVersion}}"
 JIT_CONFIG="{{.JITConfig}}"
-INSTANCE_ID=$(curl -sf http://169.254.169.254/latest/meta-data/instance-id)
 
-echo "=== jit-runners: configuring ephemeral runner on ${INSTANCE_ID} ==="
+# IMDSv2 token-based metadata access
+IMDS_TOKEN=$(curl -sf -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+INSTANCE_ID=$(curl -sf -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" http://169.254.169.254/latest/meta-data/instance-id)
+REGION=$(curl -sf -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" http://169.254.169.254/latest/meta-data/placement/region)
+
+echo "=== jit-runners: configuring ephemeral runner on ${INSTANCE_ID} (${REGION}) ==="
+echo "Runner version: ${RUNNER_VERSION}"
+
+# Install runner dependencies (libicu required by .NET runtime)
+dnf install -y libicu lttng-ust openssl-libs krb5-libs zlib
 
 # Create runner user
 useradd -m -s /bin/bash runner || true
@@ -24,18 +34,23 @@ useradd -m -s /bin/bash runner || true
 # Download and extract runner
 cd /home/runner
 mkdir -p actions-runner && cd actions-runner
-curl -sL "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" | tar xz
+curl -sL -o runner.tar.gz "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
+tar xzf runner.tar.gz
 
 # Set ownership
 chown -R runner:runner /home/runner/actions-runner
 
 # Start the runner with JIT config (runs one job, then exits)
-su - runner -c "cd /home/runner/actions-runner && ./run.sh --jitconfig ${JIT_CONFIG}" || true
+echo "Starting runner with JIT config..."
+su - runner -c "cd /home/runner/actions-runner && ./run.sh --jitconfig '${JIT_CONFIG}'" 2>&1
+RUNNER_EXIT=$?
+echo "=== jit-runners: runner exited with code ${RUNNER_EXIT} ==="
 
-echo "=== jit-runners: runner finished, terminating instance ==="
+# Upload log to S3 before terminating (best-effort)
+aws s3 cp /var/log/jit-runner.log "s3://jit-runners-lambda-s3/logs/${INSTANCE_ID}.log" --region "${REGION}" || true
 
-# Self-terminate
-aws ec2 terminate-instances --instance-ids "${INSTANCE_ID}" --region "$(curl -sf http://169.254.169.254/latest/meta-data/placement/region)" || true
+echo "=== jit-runners: terminating instance ==="
+aws ec2 terminate-instances --instance-ids "${INSTANCE_ID}" --region "${REGION}" || true
 `
 
 // UserDataParams contains the parameters for the user-data script template.

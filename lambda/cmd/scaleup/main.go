@@ -21,7 +21,7 @@ import (
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/webhook"
 )
 
-const defaultRunnerVersion = "2.321.0"
+const defaultRunnerVersion = "2.332.0"
 
 var (
 	cfgOnce sync.Once
