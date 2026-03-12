@@ -1,4 +1,4 @@
-name: Build Runner AMI
+name: build runner ami
 
 on:
   workflow_dispatch:
@@ -30,7 +30,6 @@ env:
 
 jobs:
   build:
-    name: Build AMI
     runs-on: [self-hosted, medium]
     steps:
       - uses: actions/checkout@v4

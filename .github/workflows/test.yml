@@ -1,4 +1,4 @@
-name: Test
+name: test
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   test:
-    name: Fmt, Vet, Test and Coverage
+    name: fmt, vet, test and coverage
     runs-on: [self-hosted, large]
     defaults:
       run:
@@ -36,7 +36,7 @@ jobs:
         run: go tool cover -func=coverage.out
 
   lint:
-    name: Lint
+    name: lint
     runs-on: [self-hosted, large]
     steps:
       - uses: actions/checkout@v4
