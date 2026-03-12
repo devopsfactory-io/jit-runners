@@ -7,7 +7,7 @@ set -euo pipefail
 RUNNER_VERSION="${RUNNER_VERSION:-2.332.0}"
 
 echo "=== jit-runners: installing runner dependencies ==="
-sudo dnf install -y libicu lttng-ust openssl-libs krb5-libs zlib
+sudo dnf install -y libicu lttng-ust openssl-libs krb5-libs zlib git make tar gzip
 
 echo "=== jit-runners: creating runner user ==="
 sudo useradd -m -s /bin/bash runner || true
