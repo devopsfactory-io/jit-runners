@@ -79,7 +79,7 @@ jit-runners ships a pre-baked Amazon Linux 2023 AMI with all GitHub Actions runn
 
 The AMI is built with [Packer](https://www.packer.io/) from `infra/packer/`. It:
 
-- Installs runner system libraries (`libicu`, `lttng-ust`, `openssl-libs`, `krb5-libs`, `zlib`).
+- Installs runner system libraries and CI toolchain (`libicu`, `lttng-ust`, `openssl-libs`, `krb5-libs`, `zlib`, `git`, `make`, `tar`, `gzip`, `unzip`).
 - Creates a dedicated `runner` OS user.
 - Downloads the GitHub Actions runner agent to `/home/runner/actions-runner/`.
 - Writes a version marker at `/opt/jit-runner-prebaked`.

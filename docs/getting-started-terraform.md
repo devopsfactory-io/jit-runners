@@ -120,7 +120,8 @@ Use `label_mappings` to map workflow labels to specific instance types:
 
 ```hcl
 label_mappings = jsonencode([
-  {"label": "large",   "instance_type": "c5.2xlarge", "ami": "ami-xxxxxxxxx"},
+  {"label": "large",   "instance_type": "c5.xlarge"},
+  {"label": "release", "instance_type": "m5.xlarge"},
   {"label": "gpu",     "instance_type": "g4dn.xlarge", "ami": "ami-yyyyyyyyy"},
   {"label": "arm64",   "instance_type": "c7g.xlarge",  "ami": "ami-zzzzzzzzz"}
 ])
@@ -132,7 +133,14 @@ Then use the labels in your workflows:
 jobs:
   build:
     runs-on: [self-hosted, large]
+
+  release:
+    runs-on: [self-hosted, release]
 ```
+
+## EC2 Spot Service-Linked Role
+
+The Terraform configuration in `infra/terraform/ec2.tf` includes an `aws_iam_service_linked_role` resource that provisions `AWSServiceRoleForEC2Spot`. This role is required for EC2 to fulfill spot instance requests. If the role already exists in your account, Terraform will import it gracefully; if it is absent and not provisioned, spot requests fail with `AuthFailure.ServiceLinkedRoleCreationNotPermitted`. No action is needed — the resource is managed automatically.
 
 ## Remote State (Recommended)
 

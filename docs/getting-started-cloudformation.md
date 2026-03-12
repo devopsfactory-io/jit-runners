@@ -59,7 +59,7 @@ aws cloudformation deploy \
     DefaultAMI="ami-0123456789abcdef0"
 ```
 
-**Note**: `--capabilities CAPABILITY_NAMED_IAM` is required because the template creates named IAM roles.
+**Note**: `--capabilities CAPABILITY_NAMED_IAM` is required because the template creates named IAM roles, including the `AWSServiceRoleForEC2Spot` service-linked role. This role is required for EC2 to launch spot instances. If the role already exists in your account the resource is a no-op; if it is missing and the template does not create it, spot instance requests fail with `AuthFailure.ServiceLinkedRoleCreationNotPermitted`.
 
 **AMI region**: The `DefaultAMI` must exist in the **same AWS region** where you are deploying the stack. If you are using a pre-baked community AMI published from a different region, copy it first:
 
@@ -73,9 +73,32 @@ This copies the AMI to all distribution regions. Then use the region-specific AM
 
 Add these to `--parameter-overrides` if needed:
 
-- `LabelMappings='[{"label":"large","instance_type":"c5.2xlarge"}]'` -- Map workflow labels to instance types
+- `LabelMappings='[{"label":"large","instance_type":"c5.xlarge"},{"label":"release","instance_type":"m5.xlarge"}]'` -- Map workflow labels to instance types
 - `StaleThresholdMinutes=10` -- Minutes before a pending runner is considered stale (default: 10)
 - `MaxRunnerAgeMinutes=360` -- Maximum age before force-termination (default: 360)
+
+### Default LabelMappings
+
+The template ships with the following label-to-instance-type mappings:
+
+|Label|Instance type|
+|-----|-------------|
+|nano|t2.nano|
+|micro|t2.micro|
+|small|t2.small|
+|medium|t3.medium|
+|large|c5.xlarge|
+|release|m5.xlarge|
+
+The `release` label is intended for release workflows that require a stable, low-interruption instance type. Use it in your release workflow:
+
+```yaml
+jobs:
+  release:
+    runs-on: [self-hosted, release]
+```
+
+Override or extend these mappings via the `LabelMappings` parameter as shown above.
 
 ## 4. Get the Webhook URL
 

@@ -168,10 +168,12 @@ This means:
 
 ### What's pre-installed
 
-- System packages: `libicu`, `lttng-ust`, `openssl-libs`, `krb5-libs`, `zlib`
+- System packages: `libicu`, `lttng-ust`, `openssl-libs`, `krb5-libs`, `zlib`, `git`, `make`, `tar`, `gzip`, `unzip`
 - User: `runner` with home at `/home/runner`
 - Runner agent: extracted at `/home/runner/actions-runner/`
 - Marker file: `/opt/jit-runner-prebaked` containing the version string
+
+The `git make tar gzip unzip` packages were added to ship a complete CI toolchain in the AMI, avoiding per-job installation of these common utilities.
 
 ## CI workflow
 
