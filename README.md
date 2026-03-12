@@ -2,8 +2,8 @@
 
 <p align="center">
   <a href="https://github.com/devopsfactory-io/jit-runners/releases"><img src="https://img.shields.io/github/v/release/devopsfactory-io/jit-runners?color=%239F50DA&display_name=tag&label=Version" alt="Latest Release" /></a>
-  <a href="https://pkg.go.dev/github.com/devopsfactory-io/jit-runners"><img src="https://pkg.go.dev/badge/github.com/devopsfactory-io/jit-runners" alt="Go Docs" /></a>
-  <a href="https://goreportcard.com/report/github.com/devopsfactory-io/jit-runners"><img src="https://goreportcard.com/badge/github.com/devopsfactory-io/jit-runners" alt="Go Report Card" /></a>
+  <a href="https://pkg.go.dev/github.com/devopsfactory-io/jit-runners/lambda"><img src="https://pkg.go.dev/badge/github.com/devopsfactory-io/jit-runners/lambda" alt="Go Docs" /></a>
+  <a href="https://goreportcard.com/report/github.com/devopsfactory-io/jit-runners/lambda"><img src="https://goreportcard.com/badge/github.com/devopsfactory-io/jit-runners/lambda" alt="Go Report Card" /></a>
   <a href="https://github.com/devopsfactory-io/jit-runners/actions?query=branch%3Amain"><img src="https://github.com/devopsfactory-io/jit-runners/actions/workflows/test.yml/badge.svg" alt="CI Status" /></a>
 </p>
 
