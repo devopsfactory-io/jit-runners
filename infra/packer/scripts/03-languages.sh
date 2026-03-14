@@ -10,7 +10,8 @@ NODE_MAJOR="${NODE_MAJOR:-22}"
 # --- Python 3 (AL2023 ships python3.9) ---
 echo "=== jit-runners: installing Python 3 ==="
 sudo dnf install -y python3 python3-pip python3-devel
-sudo python3 -m pip install --upgrade pip setuptools wheel
+# --ignore-installed avoids conflicts with RPM-managed packages (e.g. packaging)
+sudo python3 -m pip install --upgrade --ignore-installed pip setuptools wheel
 
 # --- Node.js LTS via NodeSource ---
 echo "=== jit-runners: installing Node.js ${NODE_MAJOR}.x LTS ==="
