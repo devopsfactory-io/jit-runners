@@ -160,7 +160,7 @@ You can extend the AMI with additional packages or configuration by providing an
 
 | Category | Tools |
 | -------- | ----- |
-| Container | Docker CE, Docker Compose v2, Docker Buildx |
+| Container | Docker 25.x (AL2023), Docker Compose v2, Docker Buildx |
 | Languages | Python 3 + pip, Node.js 22 LTS + npm, Go 1.23.x |
 | Cloud | AWS CLI v2, kubectl, Helm 3 |
 | CLI | gh, jq, yq, git-lfs, yamllint, curl, wget, rsync, tree |
@@ -229,12 +229,12 @@ The AMI ships an ubuntu-latest-like toolchain on Amazon Linux 2023, installed by
 | Sub-script | Installs |
 | ---------- | -------- |
 | `01-system-base.sh` | `libicu`, `lttng-ust`, `openssl-libs`, `krb5-libs`, `zlib`, `git`, `make`, `tar`, `gzip`, `unzip`, and Development Tools (`gcc`, `g++`, `cmake`) |
-| `02-docker.sh` | Docker CE, Docker Compose v2, Docker Buildx; `runner` user added to `docker` group |
+| `02-docker.sh` | Docker 25.x (AL2023), Docker Compose v2, Docker Buildx; `runner` user added to `docker` group |
 | `03-languages.sh` | Python 3 + pip, Node.js LTS (downloaded as binary tarball from nodejs.org — not from NodeSource RPM) + npm, Go (`go_version`) |
 | `04-cloud-tools.sh` | AWS CLI v2, kubectl (latest stable), Helm 3 |
 | `05-cli-tools.sh` | `gh`, `jq`, `yq`, `git-lfs`, `yamllint`, `curl`, `wget`, `rsync`, `tree`, `zip`, `bzip2`, `xz`, `zstd`, `lz4` |
 | `06-runner-agent.sh` | `runner` OS user, GitHub Actions runner agent at `/home/runner/actions-runner/`, marker file at `/opt/jit-runner-prebaked`, manifest at `/opt/jit-runner-manifest.txt` |
-| `07-cleanup.sh` | DNF cache purge, temp file removal, journal truncation to minimise AMI size; writes final manifest with `jit_runners_version` field |
+| `07-cleanup.sh` | DNF cache purge, temp file removal; writes prebaked marker and final manifest with `jit_runners_version` field |
 
 A validation provisioner runs after all scripts and fails the Packer build if any critical tool is missing (`git`, `docker`, `docker compose`, `docker buildx`, `python3`, `node`, `go`, `aws`, `kubectl`, `helm`, `gh`, `jq`, `yq`, `gcc`, `cmake`, `make`, `git-lfs`).
 
@@ -242,7 +242,7 @@ The manifest file at `/opt/jit-runner-manifest.txt` records all installed tool v
 
 ## CI workflow
 
-The `.github/workflows/ami-build.yml` workflow builds AMIs automatically:
+The GitHub Actions workflow (`.github/workflows/ami-build.yml`) builds AMIs automatically:
 
 - **Runs on**: `ubuntu-latest` (GitHub-hosted runners). The self-hosted runner security group only permits egress on ports 443/80/53 — SSH (port 22) is blocked outbound, which causes Packer to time out when connecting to the build instance. GitHub-hosted runners have unrestricted network access. Using them also avoids the circular dependency of building jit-runner AMIs on the jit-runners infrastructure itself.
 - **Triggers**:

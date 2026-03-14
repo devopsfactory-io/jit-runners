@@ -4,7 +4,7 @@ JIT_RUNNERS_VERSION ?= $(shell git describe --tags --always 2>/dev/null || echo 
 AMI_DISTRIBUTION_REGIONS ?= us-east-1 us-west-1 us-west-2 eu-west-1 eu-west-2 eu-west-3 eu-central-1 eu-north-1 sa-east-1
 SOURCE_REGION ?= us-east-2
 
-.PHONY: help test lint build clean lambda.build lambda.test ami.build ami.build-test ami.validate ami.distribute ami.copy
+.PHONY: help test lint build clean lambda.build lambda.test ami.build ami.build-test ami.validate ami.build-distribute ami.copy
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_.]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'

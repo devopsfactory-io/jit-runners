@@ -11,7 +11,7 @@ source "amazon-ebs" "jit-runner" {
   region                      = var.aws_region
   instance_type               = var.instance_type
   ssh_username                = "ec2-user"
-  associate_public_ip_address = true
+  associate_public_ip_address = var.subnet_id == "" ? true : false
   ssh_timeout                 = "10m"
   ami_name      = "${var.ami_name_prefix}-${var.jit_runners_version}-runner${var.runner_version}-{{timestamp}}"
   ami_regions   = var.ami_regions
