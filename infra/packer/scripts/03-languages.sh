@@ -13,12 +13,24 @@ sudo dnf install -y python3 python3-pip python3-devel
 # --ignore-installed avoids conflicts with RPM-managed packages (e.g. packaging)
 sudo python3 -m pip install --upgrade --ignore-installed pip setuptools wheel
 
-# --- Node.js LTS via NodeSource ---
+# --- Node.js LTS (official binary tarball from nodejs.org) ---
 echo "=== jit-runners: installing Node.js ${NODE_MAJOR}.x LTS ==="
-sudo dnf install -y \
-  "https://rpm.nodesource.com/pub_${NODE_MAJOR}.x/nodistro/repo/nodesource-release-nodistro-1.noarch.rpm" \
-  || true
-sudo dnf install -y nodejs --setopt=nodesource-nodejs.module_hotfixes=1
+
+# Resolve the latest LTS version for the requested major
+NODE_FULL_VERSION=$(curl -sSL "https://nodejs.org/dist/latest-v${NODE_MAJOR}.x/" \
+  | grep -oP 'node-v\K[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+
+if [ -z "${NODE_FULL_VERSION}" ]; then
+  echo "ERROR: Could not resolve Node.js ${NODE_MAJOR}.x latest version"
+  exit 1
+fi
+
+echo "Resolved Node.js v${NODE_FULL_VERSION}"
+curl -sSL "https://nodejs.org/dist/v${NODE_FULL_VERSION}/node-v${NODE_FULL_VERSION}-linux-x64.tar.xz" \
+  | sudo tar -C /usr/local --strip-components=1 -xJf -
+
+node --version
+npm --version
 sudo corepack enable || true
 
 # --- Go ---

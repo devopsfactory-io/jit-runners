@@ -75,3 +75,15 @@ variable "volume_size" {
   default     = 30
   description = "Root EBS volume size in GB for the AMI."
 }
+
+variable "ami_groups" {
+  type        = list(string)
+  default     = ["all"]
+  description = "Launch permission groups. Use [\"all\"] for public, [] for private."
+}
+
+variable "jit_runners_version" {
+  type        = string
+  default     = "dev"
+  description = "jit-runners project version (e.g. v0.3.0). Defaults to 'dev' for local builds."
+}

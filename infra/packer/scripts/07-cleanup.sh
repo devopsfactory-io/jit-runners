@@ -4,6 +4,7 @@ set -euo pipefail
 # jit-runners: Post-provisioning cleanup, manifest generation, and marker file.
 
 RUNNER_VERSION="${RUNNER_VERSION:-2.332.0}"
+JIT_RUNNERS_VERSION="${JIT_RUNNERS_VERSION:-dev}"
 
 echo "=== jit-runners: cleaning up ==="
 sudo dnf clean all
@@ -15,6 +16,7 @@ echo "${RUNNER_VERSION}" | sudo tee /opt/jit-runner-prebaked > /dev/null
 # Write a manifest of installed tools for debugging and verification
 sudo tee /opt/jit-runner-manifest.txt > /dev/null <<MANIFEST
 jit-runner-prebaked AMI manifest
+jit_runners_version: ${JIT_RUNNERS_VERSION}
 runner_version: ${RUNNER_VERSION}
 build_date: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 ---

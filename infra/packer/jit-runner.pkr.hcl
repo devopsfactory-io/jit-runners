@@ -11,11 +11,11 @@ source "amazon-ebs" "jit-runner" {
   region        = var.aws_region
   instance_type = var.instance_type
   ssh_username  = "ec2-user"
-  ami_name      = "${var.ami_name_prefix}-${var.runner_version}-{{timestamp}}"
+  ami_name      = "${var.ami_name_prefix}-${var.jit_runners_version}-runner${var.runner_version}-{{timestamp}}"
   ami_regions   = var.ami_regions
 
-  # Publish to AWS Community AMI catalog
-  ami_groups = ["all"]
+  # Launch permissions: ["all"] for public (community AMI), [] for private (PR test builds)
+  ami_groups = var.ami_groups
 
   source_ami_filter {
     filters = {
@@ -47,12 +47,13 @@ source "amazon-ebs" "jit-runner" {
   }
 
   tags = {
-    Name             = "${var.ami_name_prefix}-v${var.runner_version}"
-    "runner-version" = var.runner_version
-    "project"        = "jit-runners"
-    "source"         = "github.com/devopsfactory-io/jit-runners"
-    "built-by"       = "packer"
-    "tools"          = "git,docker,python3,node,go,awscli,kubectl,helm,gh,jq,yq,gcc,cmake,make"
+    Name                  = "${var.ami_name_prefix}-${var.jit_runners_version}-runner${var.runner_version}"
+    "runner-version"      = var.runner_version
+    "jit-runners-version" = var.jit_runners_version
+    "project"             = "jit-runners"
+    "source"              = "github.com/devopsfactory-io/jit-runners"
+    "built-by"            = "packer"
+    "tools"               = "git,docker,python3,node,go,awscli,kubectl,helm,gh,jq,yq,gcc,cmake,make"
   }
 
   run_tags = {
@@ -81,6 +82,7 @@ build {
       "RUNNER_VERSION=${var.runner_version}",
       "GO_VERSION=${var.go_version}",
       "NODE_MAJOR=${var.node_major_version}",
+      "JIT_RUNNERS_VERSION=${var.jit_runners_version}",
     ]
   }
 

@@ -1,9 +1,10 @@
 RUNNER_VERSION ?= 2.332.0
+JIT_RUNNERS_VERSION ?= $(shell git describe --tags --always 2>/dev/null || echo "dev")
 
 AMI_DISTRIBUTION_REGIONS ?= us-east-1 us-west-1 us-west-2 eu-west-1 eu-west-2 eu-west-3 eu-central-1 eu-north-1 sa-east-1
 SOURCE_REGION ?= us-east-2
 
-.PHONY: help test lint build clean lambda.build lambda.test ami.build ami.validate ami.distribute ami.copy
+.PHONY: help test lint build clean lambda.build lambda.test ami.build ami.build-test ami.validate ami.distribute ami.copy
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_.]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -44,11 +45,20 @@ ami.validate: ## Validate Packer template
 	cd infra/packer && packer init . && packer validate .
 
 ami.build: ## Build pre-baked runner AMI with Packer
-	cd infra/packer && packer init . && packer build -var "runner_version=$(RUNNER_VERSION)" .
+	cd infra/packer && packer init . && packer build \
+		-var "runner_version=$(RUNNER_VERSION)" \
+		-var "jit_runners_version=$(JIT_RUNNERS_VERSION)" .
+
+ami.build-test: ## Build a private (non-public) test AMI
+	cd infra/packer && packer init . && packer build \
+		-var "runner_version=$(RUNNER_VERSION)" \
+		-var "jit_runners_version=$(JIT_RUNNERS_VERSION)" \
+		-var 'ami_groups=[]' .
 
 ami.build-distribute: ## Build AMI and copy to all distribution regions
 	cd infra/packer && packer init . && packer build \
 		-var "runner_version=$(RUNNER_VERSION)" \
+		-var "jit_runners_version=$(JIT_RUNNERS_VERSION)" \
 		-var 'ami_regions=["us-east-1","us-west-1","us-west-2","eu-west-1","eu-west-2","eu-west-3","eu-central-1","eu-north-1","sa-east-1"]' .
 
 ami.copy: ## Copy an existing AMI to all distribution regions (requires AMI_ID)
