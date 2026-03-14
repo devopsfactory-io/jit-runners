@@ -31,6 +31,7 @@ func TestGenerateUserData(t *testing.T) {
 				"git-lfs",
 				"gh-cli.repo",
 				"jq",
+				"rm -f runner.tar.gz",
 			},
 		},
 		{

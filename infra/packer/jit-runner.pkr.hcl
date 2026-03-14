@@ -8,9 +8,11 @@ packer {
 }
 
 source "amazon-ebs" "jit-runner" {
-  region        = var.aws_region
-  instance_type = var.instance_type
-  ssh_username  = "ec2-user"
+  region                      = var.aws_region
+  instance_type               = var.instance_type
+  ssh_username                = "ec2-user"
+  associate_public_ip_address = true
+  ssh_timeout                 = "10m"
   ami_name      = "${var.ami_name_prefix}-${var.jit_runners_version}-runner${var.runner_version}-{{timestamp}}"
   ami_regions   = var.ami_regions
 
@@ -53,7 +55,7 @@ source "amazon-ebs" "jit-runner" {
     "project"             = "jit-runners"
     "source"              = "github.com/devopsfactory-io/jit-runners"
     "built-by"            = "packer"
-    "tools"               = "git,docker,python3,node,go,awscli,kubectl,helm,gh,jq,yq,gcc,cmake,make"
+    "tools"               = "git,docker,python3,node,go,awscli,kubectl,helm,gh,jq,yq,git-lfs,gcc,cmake,make"
   }
 
   run_tags = {
@@ -89,7 +91,10 @@ build {
   # Optional: user-provided extra setup script
   # Pass -var 'extra_script=scripts/my-custom.sh' to packer build
   provisioner "shell" {
-    inline = var.extra_script != "" ? ["chmod +x /tmp/extra-setup.sh && /tmp/extra-setup.sh"] : ["echo 'No extra script provided, skipping.'"]
+    inline = var.extra_script != "" ? [
+      "chmod +x /tmp/packer-scripts/$(basename '${var.extra_script}')",
+      "/tmp/packer-scripts/$(basename '${var.extra_script}')",
+    ] : ["echo 'No extra script provided, skipping.'"]
   }
 
   # Validate that all critical tools were installed
@@ -98,6 +103,8 @@ build {
       "echo '=== jit-runners: validating installed tools ==='",
       "git --version",
       "docker --version",
+      "docker compose version",
+      "docker buildx version",
       "python3 --version",
       "node --version",
       "/usr/local/go/bin/go version",
