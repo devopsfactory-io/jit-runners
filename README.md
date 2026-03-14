@@ -110,7 +110,7 @@ make ami.build-distribute
 make ami.copy AMI_ID=ami-xxxxxxxx
 ```
 
-You can also trigger an AMI build from GitHub Actions via the `ami-build.yml` workflow. Inputs: `runner_version`, `go_version`, `node_major_version`, `jit_runners_version` (auto-detected from git tags if empty), `extra_script`, `distribute`. The workflow uses OIDC (`AMI_BUILD_ROLE_ARN` secret), auto-triggers on pushes to `infra/packer/**`, and also runs on pull requests targeting `infra/packer/**` — PR builds create private, single-region AMIs that are automatically cleaned up after the build.
+You can also trigger an AMI build from GitHub Actions via the `ami-build.yml` workflow. Inputs: `runner_version`, `go_version`, `node_major_version`, `jit_runners_version` (auto-detected from git tags if empty), `extra_script`, `distribute`. The workflow uses OIDC (`AMI_BUILD_ROLE_ARN` secret), auto-triggers on pushes to `infra/packer/**`, and also runs on pull requests targeting `infra/packer/**` — PR builds create private, single-region AMIs that are automatically cleaned up after the build. The workflow runs on **GitHub-hosted runners (`ubuntu-latest`)**: the self-hosted runner security group blocks SSH egress (port 22), which Packer requires to reach the build instance, and using self-hosted runners would create a circular dependency on the infrastructure being built.
 
 ## Quick Start
 

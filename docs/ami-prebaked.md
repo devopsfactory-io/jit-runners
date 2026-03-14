@@ -244,6 +244,7 @@ The manifest file at `/opt/jit-runner-manifest.txt` records all installed tool v
 
 The `.github/workflows/ami-build.yml` workflow builds AMIs automatically:
 
+- **Runs on**: `ubuntu-latest` (GitHub-hosted runners). The self-hosted runner security group only permits egress on ports 443/80/53 — SSH (port 22) is blocked outbound, which causes Packer to time out when connecting to the build instance. GitHub-hosted runners have unrestricted network access. Using them also avoids the circular dependency of building jit-runner AMIs on the jit-runners infrastructure itself.
 - **Triggers**:
   - `workflow_dispatch` (manual)
   - Push to `main` when `infra/packer/**` changes — produces a public, distributable AMI
