@@ -63,9 +63,15 @@ source "amazon-ebs" "jit-runner" {
 build {
   sources = ["source.amazon-ebs.jit-runner"]
 
+  # Upload all provisioning scripts to the remote instance
+  provisioner "file" {
+    source      = "scripts/"
+    destination = "/tmp/packer-scripts"
+  }
+
   # Full runner setup (system packages, Docker, languages, cloud tools, runner agent)
   provisioner "shell" {
-    script = "scripts/setup-runner.sh"
+    inline = ["bash /tmp/packer-scripts/setup-runner.sh"]
     environment_vars = [
       "RUNNER_VERSION=${var.runner_version}",
       "GO_VERSION=${var.go_version}",

@@ -72,6 +72,6 @@ variable "node_major_version" {
 
 variable "volume_size" {
   type        = number
-  default     = 16
+  default     = 30
   description = "Root EBS volume size in GB for the AMI."
 }
