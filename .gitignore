@@ -33,3 +33,4 @@ Thumbs.db
 *.tfvars
 !*.tfvars.example
 .terraform.lock.hcl
+manifest.json
