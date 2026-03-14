@@ -34,7 +34,15 @@ if [ -f /opt/jit-runner-prebaked ]; then
     fi
 else
     echo "=== jit-runners: stock AMI, installing dependencies ==="
-    dnf install -y libicu lttng-ust openssl-libs krb5-libs zlib
+    dnf install -y libicu lttng-ust openssl-libs krb5-libs zlib \
+        git git-lfs make tar gzip unzip zip curl wget jq \
+        openssl gnupg2 openssh-clients procps-ng sudo
+
+    # Install GitHub CLI
+    dnf install -y 'dnf-command(config-manager)'
+    dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
+    dnf install -y gh
+
     useradd -m -s /bin/bash runner || true
     cd /home/runner
     mkdir -p actions-runner && cd actions-runner

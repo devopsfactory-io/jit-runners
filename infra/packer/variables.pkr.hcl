@@ -57,3 +57,21 @@ variable "subnet_id" {
   default     = ""
   description = "Subnet ID for the build instance (optional, uses default VPC if empty)."
 }
+
+variable "go_version" {
+  type        = string
+  default     = "1.23.6"
+  description = "Go version to pre-install in the AMI."
+}
+
+variable "node_major_version" {
+  type        = string
+  default     = "22"
+  description = "Node.js major version (LTS) to pre-install in the AMI."
+}
+
+variable "volume_size" {
+  type        = number
+  default     = 16
+  description = "Root EBS volume size in GB for the AMI."
+}

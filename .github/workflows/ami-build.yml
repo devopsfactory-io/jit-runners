@@ -7,6 +7,14 @@ on:
         description: "GitHub Actions runner version"
         default: "2.332.0"
         required: true
+      go_version:
+        description: "Go version to pre-install"
+        default: "1.23.6"
+        required: false
+      node_major_version:
+        description: "Node.js major version (LTS) to pre-install"
+        default: "22"
+        required: false
       extra_script:
         description: "Path to extra setup script (relative to infra/packer/)"
         default: ""
@@ -67,7 +75,9 @@ jobs:
         run: |
           RUNNER_VERSION="${{ inputs.runner_version || '2.332.0' }}"
           DISTRIBUTE="${{ inputs.distribute || 'true' }}"
-          ARGS="-var runner_version=${RUNNER_VERSION}"
+          GO_VERSION="${{ inputs.go_version || '1.23.6' }}"
+          NODE_MAJOR="${{ inputs.node_major_version || '22' }}"
+          ARGS="-var runner_version=${RUNNER_VERSION} -var go_version=${GO_VERSION} -var node_major_version=${NODE_MAJOR}"
 
           if [ "${DISTRIBUTE}" = "true" ]; then
             ARGS="${ARGS} -var ami_regions=[\"us-east-1\",\"us-west-1\",\"us-west-2\",\"eu-west-1\",\"eu-west-2\",\"eu-west-3\",\"eu-central-1\",\"eu-north-1\",\"sa-east-1\"]"
@@ -91,7 +101,12 @@ jobs:
           echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
           echo "| ----- | ----- |" >> "$GITHUB_STEP_SUMMARY"
           echo "| AMI ID (source) | \`${AMI_ID}\` |" >> "$GITHUB_STEP_SUMMARY"
+          GO_VERSION="${{ inputs.go_version || '1.23.6' }}"
+          NODE_MAJOR="${{ inputs.node_major_version || '22' }}"
+
           echo "| Runner Version | ${RUNNER_VERSION} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Go Version | ${GO_VERSION} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Node.js | ${NODE_MAJOR}.x LTS |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Source Region | us-east-2 |" >> "$GITHUB_STEP_SUMMARY"
 
           if [ "${DISTRIBUTE}" = "true" ]; then

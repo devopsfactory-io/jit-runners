@@ -1,26 +1,37 @@
 #!/bin/bash
 set -euo pipefail
 
-# jit-runners: Pre-bake AMI with GitHub Actions runner dependencies
-# This script is run by Packer during AMI build.
+# jit-runners: AMI provisioning orchestrator.
+# Calls numbered sub-scripts in order to build a pre-baked runner AMI
+# with an ubuntu-latest-like toolchain on Amazon Linux 2023.
+#
+# Environment variables (set by Packer):
+#   RUNNER_VERSION  — GitHub Actions runner version (default: 2.332.0)
+#   GO_VERSION      — Go version to install (default: 1.23.6)
+#   NODE_MAJOR      — Node.js major version / LTS (default: 22)
 
-RUNNER_VERSION="${RUNNER_VERSION:-2.332.0}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "=== jit-runners: installing runner dependencies ==="
-sudo dnf install -y libicu lttng-ust openssl-libs krb5-libs zlib git make tar gzip unzip
+echo "=== jit-runners: starting AMI provisioning ==="
 
-echo "=== jit-runners: creating runner user ==="
-sudo useradd -m -s /bin/bash runner || true
+# Execution order: system deps (01) first, then runner user (06) before
+# Docker (02) which adds the user to the docker group.
 
-echo "=== jit-runners: downloading runner v${RUNNER_VERSION} ==="
-sudo mkdir -p /home/runner/actions-runner
-sudo curl -sL -o /home/runner/actions-runner/runner.tar.gz \
-  "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
-sudo tar xzf /home/runner/actions-runner/runner.tar.gz -C /home/runner/actions-runner
-sudo rm -f /home/runner/actions-runner/runner.tar.gz
-sudo chown -R runner:runner /home/runner/actions-runner
+for script in \
+  "${SCRIPT_DIR}/01-system-base.sh" \
+  "${SCRIPT_DIR}/06-runner-agent.sh" \
+  "${SCRIPT_DIR}/02-docker.sh" \
+  "${SCRIPT_DIR}/03-languages.sh" \
+  "${SCRIPT_DIR}/04-cloud-tools.sh" \
+  "${SCRIPT_DIR}/05-cli-tools.sh" \
+  "${SCRIPT_DIR}/07-cleanup.sh"; do
 
-echo "=== jit-runners: writing marker file ==="
-echo "${RUNNER_VERSION}" | sudo tee /opt/jit-runner-prebaked > /dev/null
+  echo ""
+  echo "========================================"
+  echo "=== jit-runners: running $(basename "$script")"
+  echo "========================================"
+  bash "$script"
+done
 
-echo "=== jit-runners: AMI setup complete (runner v${RUNNER_VERSION}) ==="
+echo ""
+echo "=== jit-runners: all provisioning scripts complete ==="
