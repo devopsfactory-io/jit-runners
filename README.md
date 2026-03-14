@@ -75,14 +75,17 @@ The three Lambda functions share code via `lambda/internal/`:
 
 ## Pre-baked AMI
 
-jit-runners ships a pre-baked Amazon Linux 2023 AMI with all GitHub Actions runner dependencies pre-installed. Using the pre-baked AMI eliminates the per-job dependency installation step, reducing cold-start time.
+jit-runners ships a pre-baked Amazon Linux 2023 AMI with an ubuntu-latest-like toolchain pre-installed. Using the pre-baked AMI eliminates the per-job dependency installation step, reducing cold-start time.
 
 The AMI is built with [Packer](https://www.packer.io/) from `infra/packer/`. It:
 
-- Installs runner system libraries and CI toolchain (`libicu`, `lttng-ust`, `openssl-libs`, `krb5-libs`, `zlib`, `git`, `make`, `tar`, `gzip`, `unzip`).
-- Creates a dedicated `runner` OS user.
-- Downloads the GitHub Actions runner agent to `/home/runner/actions-runner/`.
-- Writes a version marker at `/opt/jit-runner-prebaked`.
+- Installs system libraries, build tools (`gcc`, `g++`, `cmake`), and common utilities.
+- Installs Docker CE, Docker Compose v2, and Docker Buildx.
+- Installs Python 3 + pip, Node.js 22 LTS + npm, and Go 1.23.x.
+- Installs cloud tools: AWS CLI v2, kubectl, and Helm 3.
+- Installs CLI tools: `gh`, `jq`, `yq`, `git-lfs`, `yamllint`, and more.
+- Creates a dedicated `runner` OS user and downloads the GitHub Actions runner agent to `/home/runner/actions-runner/`.
+- Writes a version marker at `/opt/jit-runner-prebaked` and a tool manifest at `/opt/jit-runner-manifest.txt`.
 
 At instance launch, the user-data script checks for `/opt/jit-runner-prebaked`. If the file exists and the version matches the requested runner version, dependency installation and user creation are skipped. If the version differs, only the runner binary is re-downloaded. Stock AMIs (no marker file) still work as before.
 
@@ -104,7 +107,7 @@ make ami.build-distribute
 make ami.copy AMI_ID=ami-xxxxxxxx
 ```
 
-You can also trigger an AMI build from GitHub Actions via the `ami-build.yml` workflow (workflow_dispatch). Inputs: `runner_version`, `extra_script`, `distribute`. The workflow uses OIDC (`AMI_BUILD_ROLE_ARN` secret) and auto-triggers on pushes to `infra/packer/**`.
+You can also trigger an AMI build from GitHub Actions via the `ami-build.yml` workflow (workflow_dispatch). Inputs: `runner_version`, `go_version`, `node_major_version`, `extra_script`, `distribute`. The workflow uses OIDC (`AMI_BUILD_ROLE_ARN` secret) and auto-triggers on pushes to `infra/packer/**`.
 
 ## Quick Start
 

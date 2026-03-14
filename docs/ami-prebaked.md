@@ -102,6 +102,9 @@ make ami.validate
 | `extra_script` | `""` | Path to an extra setup script (see below) |
 | `ami_name_prefix` | `jit-runner` | Prefix for the AMI name |
 | `subnet_id` | `""` | Subnet for the build instance (uses default VPC if empty) |
+| `go_version` | `1.23.6` | Go version to pre-install in the AMI |
+| `node_major_version` | `22` | Node.js major version (LTS) to pre-install in the AMI |
+| `volume_size` | `16` | Root EBS volume size in GB (gp3) |
 
 Pass variables with `-var`:
 
@@ -109,12 +112,30 @@ Pass variables with `-var`:
 cd infra/packer && packer build \
   -var "runner_version=2.335.0" \
   -var "instance_type=t3.large" \
+  -var "go_version=1.23.6" \
+  -var "node_major_version=22" \
   .
 ```
 
 ## Extra setup scripts
 
-You can extend the AMI with additional packages or configuration by providing an `extra_script`. This script runs after the base setup (dependencies, runner user, runner agent).
+You can extend the AMI with additional packages or configuration by providing an `extra_script`. This script runs after the full base setup (all 7 sub-scripts: system packages, Docker, languages, cloud tools, CLI tools, runner agent, and cleanup). Because Docker, Go, Node.js, AWS CLI, kubectl, Helm, and the GitHub CLI are already present, `extra_script` is best used for tools not in the base toolchain.
+
+### What's already installed (no need to add in extra_script)
+
+| Category | Tools |
+| -------- | ----- |
+| Container | Docker CE, Docker Compose v2, Docker Buildx |
+| Languages | Python 3 + pip, Node.js 22 LTS + npm, Go 1.23.x |
+| Cloud | AWS CLI v2, kubectl, Helm 3 |
+| CLI | gh, jq, yq, git-lfs, yamllint, curl, wget, rsync, tree |
+| Build | gcc, g++, cmake (Development Tools group) |
+| Compression | zip, bzip2, xz, zstd, lz4 |
+| Runner | GitHub Actions runner agent, runner OS user |
+
+### What's NOT included (install per-workflow or via extra_script)
+
+OpenTofu/Terraform/Terragrunt, Azure CLI, GCP CLI, Java, .NET, Ruby, Podman, Buildah.
 
 ### Create a script
 
@@ -124,13 +145,10 @@ Create a shell script in `infra/packer/scripts/`:
 #!/bin/bash
 set -euo pipefail
 
-# Example: install Docker and Node.js for your workflows
-sudo dnf install -y docker
-sudo systemctl enable docker
-
-# Install Node.js
-curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
-sudo dnf install -y nodejs
+# Example: install Terraform for workflows that need it
+sudo dnf install -y yum-utils
+sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo
+sudo dnf install -y terraform
 ```
 
 ### Build with the extra script
@@ -168,21 +186,30 @@ This means:
 
 ### What's pre-installed
 
-- System packages: `libicu`, `lttng-ust`, `openssl-libs`, `krb5-libs`, `zlib`, `git`, `make`, `tar`, `gzip`, `unzip`
-- User: `runner` with home at `/home/runner`
-- Runner agent: extracted at `/home/runner/actions-runner/`
-- Marker file: `/opt/jit-runner-prebaked` containing the version string
+The AMI ships an ubuntu-latest-like toolchain on Amazon Linux 2023, installed by 7 ordered sub-scripts called from `setup-runner.sh`:
 
-The `git make tar gzip unzip` packages were added to ship a complete CI toolchain in the AMI, avoiding per-job installation of these common utilities.
+| Sub-script | Installs |
+| ---------- | -------- |
+| `01-system-base.sh` | `libicu`, `lttng-ust`, `openssl-libs`, `krb5-libs`, `zlib`, `git`, `make`, `tar`, `gzip`, `unzip`, and Development Tools (`gcc`, `g++`, `cmake`) |
+| `02-docker.sh` | Docker CE, Docker Compose v2, Docker Buildx; `runner` user added to `docker` group |
+| `03-languages.sh` | Python 3 + pip, Node.js (major version LTS) + npm, Go (`go_version`) |
+| `04-cloud-tools.sh` | AWS CLI v2, kubectl (latest stable), Helm 3 |
+| `05-cli-tools.sh` | `gh`, `jq`, `yq`, `git-lfs`, `yamllint`, `curl`, `wget`, `rsync`, `tree`, `zip`, `bzip2`, `xz`, `zstd`, `lz4` |
+| `06-runner-agent.sh` | `runner` OS user, GitHub Actions runner agent at `/home/runner/actions-runner/`, marker file at `/opt/jit-runner-prebaked`, manifest at `/opt/jit-runner-manifest.txt` |
+| `07-cleanup.sh` | DNF cache purge, temp file removal, journal truncation to minimise AMI size |
+
+A validation provisioner runs after all scripts and fails the Packer build if any critical tool is missing (`git`, `docker`, `python3`, `node`, `go`, `aws`, `kubectl`, `helm`, `gh`, `jq`, `yq`, `gcc`, `cmake`, `make`, `git-lfs`).
+
+The manifest file at `/opt/jit-runner-manifest.txt` records all installed tool versions for traceability.
 
 ## CI workflow
 
 The `.github/workflows/ami-build.yml` workflow builds AMIs automatically:
 
 - **Trigger**: `workflow_dispatch` (manual) or push to `main` when `infra/packer/**` changes
-- **Inputs**: `runner_version`, `extra_script`, `distribute` (boolean)
+- **Inputs**: `runner_version`, `go_version`, `node_major_version`, `extra_script`, `distribute` (boolean)
 - **Auth**: OIDC role assumption via `AMI_BUILD_ROLE_ARN` secret
-- **Output**: AMI ID in the GitHub Actions job summary
+- **Output**: AMI ID, Go version, and Node.js version in the GitHub Actions job summary
 
 ## Multi-region cost
 
