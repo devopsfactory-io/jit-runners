@@ -9,6 +9,10 @@ echo "=== jit-runners: installing Docker CE ==="
 sudo dnf install -y dnf-plugins-core
 sudo dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
 
+# AL2023 reports a non-standard $releasever (e.g. 2023.10.xxx) that doesn't
+# exist in Docker's Fedora repo. Pin to Fedora 39 which is the closest match.
+sudo sed -i 's/\$releasever/39/g' /etc/yum.repos.d/docker-ce.repo
+
 sudo dnf install -y docker-ce docker-ce-cli containerd.io \
   docker-buildx-plugin docker-compose-plugin
 
