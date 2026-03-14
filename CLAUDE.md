@@ -105,7 +105,7 @@ infra/
   cloudformation/           # AWS CloudFormation template (YAML)
   packer/                   # Packer template for pre-baked runner AMI (AL2023)
     jit-runner.pkr.hcl      # amazon-ebs source; community AMI catalog publishing; validation provisioner
-    variables.pkr.hcl       # runner_version, aws_region, ami_regions, instance_type, extra_script, ami_name_prefix, subnet_id, go_version, node_major_version, volume_size
+    variables.pkr.hcl       # runner_version, aws_region, ami_regions, ami_distribution_regions, instance_type, extra_script, ami_name_prefix, subnet_id, go_version, node_major_version, volume_size
     scripts/
       setup-runner.sh       # Orchestrator: calls 01–07 sub-scripts in order
       01-system-base.sh     # System libs and Development Tools (gcc, g++, cmake)
