@@ -89,7 +89,7 @@ build {
       "node --version",
       "/usr/local/go/bin/go version",
       "aws --version",
-      "kubectl version --client",
+      "kubectl version --client -o json | jq -r '.clientVersion.gitVersion'",
       "helm version --short",
       "gh --version",
       "jq --version",
