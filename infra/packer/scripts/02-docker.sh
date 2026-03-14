@@ -1,23 +1,34 @@
 #!/bin/bash
 set -euo pipefail
 
-# jit-runners: Docker CE, Compose v2 plugin, and Buildx plugin.
-# Uses the Docker CE Fedora repo (compatible with AL2023).
+# jit-runners: Docker Engine, Compose v2 plugin, and Buildx plugin.
+# AL2023 ships Docker 25.x in its own repos. We use that and add
+# Compose v2 + Buildx as CLI plugins from GitHub releases.
 
-echo "=== jit-runners: installing Docker CE ==="
+echo "=== jit-runners: installing Docker ==="
 
-sudo dnf install -y dnf-plugins-core
-sudo dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
-
-# AL2023 reports a non-standard $releasever (e.g. 2023.10.xxx) that doesn't
-# exist in Docker's Fedora repo. Pin to Fedora 39 which is the closest match.
-sudo sed -i 's/\$releasever/39/g' /etc/yum.repos.d/docker-ce.repo
-
-sudo dnf install -y docker-ce docker-ce-cli containerd.io \
-  docker-buildx-plugin docker-compose-plugin
+# AL2023 already includes Docker in its repos (25.x).
+# Remove any pre-installed version first to do a clean install.
+sudo dnf remove -y docker 2>/dev/null || true
+sudo dnf install -y docker
 
 # Enable Docker service (starts on boot)
 sudo systemctl enable docker
+
+# Install Docker Compose v2 as a CLI plugin
+echo "=== jit-runners: installing Docker Compose v2 ==="
+COMPOSE_VERSION=$(curl -sSL https://api.github.com/repos/docker/compose/releases/latest | jq -r .tag_name)
+sudo mkdir -p /usr/local/lib/docker/cli-plugins
+sudo curl -sSL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64" \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+# Install Docker Buildx as a CLI plugin
+echo "=== jit-runners: installing Docker Buildx ==="
+BUILDX_VERSION=$(curl -sSL https://api.github.com/repos/docker/buildx/releases/latest | jq -r .tag_name)
+sudo curl -sSL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64" \
+  -o /usr/local/lib/docker/cli-plugins/docker-buildx
+sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
 
 # Add runner user to docker group so workflows don't need sudo
 sudo usermod -aG docker runner 2>/dev/null || true
