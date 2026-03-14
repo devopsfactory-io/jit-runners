@@ -89,7 +89,7 @@ The AMI is built with [Packer](https://www.packer.io/) from `infra/packer/`. It:
 
 At instance launch, the user-data script checks for `/opt/jit-runner-prebaked`. If the file exists and the version matches the requested runner version, dependency installation and user creation are skipped. If the version differs, only the runner binary is re-downloaded. Stock AMIs (no marker file) still work as before.
 
-The AMI is published publicly to the AWS Community AMI catalog (`ami_groups = ["all"]`) with name pattern `jit-runner-<version>-<timestamp>`. It can be distributed to multiple regions: `us-east-1`, `us-west-1`, `us-west-2`, `eu-west-1`, `eu-west-2`, `eu-west-3`, `eu-central-1`, `eu-north-1`, `sa-east-1`.
+The AMI is published publicly to the AWS Community AMI catalog (`ami_groups = ["all"]`) with name pattern `jit-runner-{jit_runners_version}-runner{runner_version}-{timestamp}` (example: `jit-runner-v0.3.0-runner2.332.0-1773472793`). It can be distributed to multiple regions: `us-east-1`, `us-west-1`, `us-west-2`, `eu-west-1`, `eu-west-2`, `eu-west-3`, `eu-central-1`, `eu-north-1`, `sa-east-1`.
 
 ### Building the AMI
 
@@ -97,8 +97,11 @@ The AMI is published publicly to the AWS Community AMI catalog (`ami_groups = ["
 # Validate Packer template
 make ami.validate
 
-# Build AMI in us-east-2 only
+# Build public AMI in us-east-2 only (version auto-detected from git)
 make ami.build
+
+# Build private test AMI (not published to Community AMI catalog)
+make ami.build-test
 
 # Build and copy to all distribution regions (US, EU, SA)
 make ami.build-distribute
@@ -107,7 +110,7 @@ make ami.build-distribute
 make ami.copy AMI_ID=ami-xxxxxxxx
 ```
 
-You can also trigger an AMI build from GitHub Actions via the `ami-build.yml` workflow (workflow_dispatch). Inputs: `runner_version`, `go_version`, `node_major_version`, `extra_script`, `distribute`. The workflow uses OIDC (`AMI_BUILD_ROLE_ARN` secret) and auto-triggers on pushes to `infra/packer/**`.
+You can also trigger an AMI build from GitHub Actions via the `ami-build.yml` workflow. Inputs: `runner_version`, `go_version`, `node_major_version`, `jit_runners_version` (auto-detected from git tags if empty), `extra_script`, `distribute`. The workflow uses OIDC (`AMI_BUILD_ROLE_ARN` secret), auto-triggers on pushes to `infra/packer/**`, and also runs on pull requests targeting `infra/packer/**` — PR builds create private, single-region AMIs that are automatically cleaned up after the build.
 
 ## Quick Start
 

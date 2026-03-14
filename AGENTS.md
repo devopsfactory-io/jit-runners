@@ -9,6 +9,7 @@ Guidance for AI coding agents working on the jit-runners project.
 **jit-runners** provides on-demand GitHub Actions self-hosted runners using AWS Lambda (Go) and EC2 spot instances. It listens for `workflow_job` webhooks, launches ephemeral JIT runners on EC2 spot, and auto-cleans up after job completion.
 
 Three Lambda functions share code via `lambda/internal/`:
+
 - **webhook**: Validates signature, parses `workflow_job` event, enqueues to SQS.
 - **scaleup**: Consumes SQS messages, launches EC2 spot, generates JIT runner config, tracks state in DynamoDB.
 - **scaledown**: Cleans up stale/orphaned instances on an EventBridge schedule (every 5 minutes).
@@ -31,9 +32,9 @@ Three Lambda functions share code via `lambda/internal/`:
   - **`terraform/`** – OpenTofu/Terraform HCL (API Gateway, Lambda, SQS, DynamoDB, EC2, IAM).
   - **`cloudformation/`** – AWS CloudFormation template (same resources, YAML).
   - **`packer/`** – Packer template for building a pre-baked AL2023 runner AMI.
-    - **`jit-runner.pkr.hcl`** – amazon-ebs source; tags; community AMI catalog publishing (`ami_groups = ["all"]`); validation provisioner that fails the build if any critical tool is missing.
-    - **`variables.pkr.hcl`** – `runner_version`, `aws_region`, `ami_regions`, `ami_distribution_regions`, `instance_type`, `extra_script`, `ami_name_prefix`, `subnet_id`, `go_version` (default `1.23.6`), `node_major_version` (default `22`), `volume_size` (default `16` GB gp3).
-    - **`scripts/setup-runner.sh`** – Orchestrator: calls 7 ordered sub-scripts (`01-system-base.sh`, `02-docker.sh`, `03-languages.sh`, `04-cloud-tools.sh`, `05-cli-tools.sh`, `06-runner-agent.sh`, `07-cleanup.sh`). Pre-installs an ubuntu-latest-like toolchain: Docker CE + Compose v2 + Buildx, Python 3, Node.js LTS, Go, AWS CLI v2, kubectl, Helm 3, gh, jq, yq, git-lfs, gcc/g++/cmake, and common compression utilities. Writes `/opt/jit-runner-prebaked` marker and `/opt/jit-runner-manifest.txt` tool version manifest.
+    - **`jit-runner.pkr.hcl`** – amazon-ebs source; AMI name format `{ami_name_prefix}-{jit_runners_version}-runner{runner_version}-{timestamp}`; tags including `jit-runners-version`; community AMI catalog publishing controlled by `ami_groups` (default `["all"]`, set `[]` for private); validation provisioner that fails the build if any critical tool is missing.
+    - **`variables.pkr.hcl`** – `runner_version`, `jit_runners_version` (default `dev`; auto-detected from git in CI), `aws_region`, `ami_regions`, `ami_distribution_regions`, `ami_groups` (default `["all"]` for public; set `[]` for private PR builds), `instance_type`, `extra_script`, `ami_name_prefix`, `subnet_id`, `go_version` (default `1.23.6`), `node_major_version` (default `22`), `volume_size` (default `30` GB gp3).
+    - **`scripts/setup-runner.sh`** – Orchestrator: calls 7 ordered sub-scripts (`01-system-base.sh`, `02-docker.sh`, `03-languages.sh`, `04-cloud-tools.sh`, `05-cli-tools.sh`, `06-runner-agent.sh`, `07-cleanup.sh`). Pre-installs an ubuntu-latest-like toolchain: Docker CE + Compose v2 + Buildx, Python 3, Node.js LTS (installed from nodejs.org binary tarball — not NodeSource RPM), Go, AWS CLI v2, kubectl, Helm 3, gh, jq, yq, git-lfs, gcc/g++/cmake, and common compression utilities. Writes `/opt/jit-runner-prebaked` marker and `/opt/jit-runner-manifest.txt` tool version manifest (includes `jit_runners_version` field).
 - **`docs/`** – Deployment guides: GitHub App setup, Terraform guide, CloudFormation guide.
 - **`Makefile`**, **`.golangci.yml`**, **`.goreleaser.yml`**, **`.github/workflows/`** – Build, test, lint, release.
 - **`.claude/agents/`** – Claude agents: documentation-maintainer (runs doc checklist after code/config/IaC/CI changes; delegate to it for README, docs/, infra/, AGENTS.md, CLAUDE.md, commands, skills), issue-reviewer, pr-reviewer (discoverable for triage and PR review), issue-writer (opens feature requests and bug reports from `/feature` and `/bug` using [.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/); drafts are validated by issue-reviewer before upload).
@@ -62,8 +63,11 @@ make check-fmt
 # Validate Packer template
 make ami.validate
 
-# Build pre-baked runner AMI in us-east-2 only
+# Build pre-baked runner AMI in us-east-2 only (public; version from git)
 make ami.build
+
+# Build a private (non-public) test AMI in us-east-2
+make ami.build-test
 
 # Build AMI and copy to all distribution regions (US, EU, SA)
 make ami.build-distribute
@@ -103,7 +107,7 @@ Use Go version from `lambda/go.mod`. CI runs formatting check, go vet, `make lam
 - **`.github/workflows/labeler.yml`** – On pull_request (opened, synchronize, reopened); runs [actions/labeler](https://github.com/actions/labeler) with [.github/labeler.yml](.github/labeler.yml). Path-based: jit-runners, lambda/go.mod, documentation. Head-branch: `feat*`→feature, `enhance*`→enhancement, `fix*` (not fix*dep*)→bug, branch containing `!`→breaking-change, `ci*`→github-actions, `(deps)`→dependencies.
 - **`.github/workflows/label-old-prs.yml`** – workflow_dispatch; applies the labeler to existing PRs (inputs: state e.g. merged/closed/all, limit). Use to backfill labels on old or merged PRs.
 - **`.github/workflows/release.yml`** – On push of tags `v*.*.*` (and workflow_dispatch); runs GoReleaser to create GitHub Release with three Lambda zip archives (webhook.zip, scaleup.zip, scaledown.zip), raw binaries, checksums, and release notes.
-- **`.github/workflows/ami-build.yml`** – workflow_dispatch (inputs: `runner_version`, `go_version`, `node_major_version`, `extra_script`, `distribute`) and auto-trigger on push to `infra/packer/**`. Uses OIDC (`AMI_BUILD_ROLE_ARN` secret) to assume the build role. Runs `packer validate` then `packer build`; when `distribute=true`, copies AMI to all distribution regions (US, EU, SA). Writes AMI ID, Go version, Node.js version, and build summary to the GitHub Actions job summary.
+- **`.github/workflows/ami-build.yml`** – workflow_dispatch (inputs: `runner_version`, `go_version`, `node_major_version`, `jit_runners_version`, `extra_script`, `distribute`), auto-trigger on push to `infra/packer/**`, and pull_request trigger for `infra/packer/**` changes. `jit_runners_version` is auto-detected via `git describe --tags --always` when not provided. PR builds create private (`ami_groups=[]`) AMIs with the `jit-runner-pr` name prefix, no distribution, and a post-build cleanup step that deregisters the AMI and deletes its snapshots. Non-PR builds run `packer validate` then `packer build`; when `distribute=true`, copies AMI to all distribution regions (US, EU, SA). Uses OIDC (`AMI_BUILD_ROLE_ARN` secret) to assume the build role. Writes AMI ID, jit-runners version, runner version, Go version, Node.js version, and build summary to the GitHub Actions job summary.
 - **Renovate** – Dependency-update PRs (Go modules and GitHub Actions) are opened by [Renovate](https://docs.renovatebot.com/) from [.github/renovate.json5](.github/renovate.json5). Do not remove or override this config without reason.
 
 Semantic versioning: use tags like `v0.1.0`.
