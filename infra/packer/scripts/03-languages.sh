@@ -7,10 +7,10 @@ set -euo pipefail
 GO_VERSION="${GO_VERSION:-1.23.6}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
 
-# --- Python 3 (AL2023 ships python3.11+) ---
+# --- Python 3 (AL2023 ships python3.9) ---
 echo "=== jit-runners: installing Python 3 ==="
 sudo dnf install -y python3 python3-pip python3-devel
-sudo python3 -m pip install --upgrade --break-system-packages pip setuptools wheel
+sudo python3 -m pip install --upgrade pip setuptools wheel
 
 # --- Node.js LTS via NodeSource ---
 echo "=== jit-runners: installing Node.js ${NODE_MAJOR}.x LTS ==="

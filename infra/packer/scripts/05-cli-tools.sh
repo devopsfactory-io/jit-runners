@@ -27,6 +27,6 @@ sudo chmod +x /usr/local/bin/yq
 
 # --- yamllint ---
 echo "=== jit-runners: installing yamllint ==="
-sudo python3 -m pip install --break-system-packages yamllint
+sudo python3 -m pip install yamllint
 
 echo "=== jit-runners: CLI tools installed ==="
