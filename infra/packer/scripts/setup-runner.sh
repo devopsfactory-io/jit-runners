@@ -9,6 +9,11 @@ RUNNER_VERSION="${RUNNER_VERSION:-2.332.0}"
 echo "=== jit-runners: installing runner dependencies ==="
 sudo dnf install -y libicu lttng-ust openssl-libs krb5-libs zlib git make tar gzip unzip
 
+echo "=== jit-runners: installing GitHub CLI ==="
+sudo dnf install -y 'dnf-command(config-manager)'
+sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
+sudo dnf install -y gh
+
 echo "=== jit-runners: creating runner user ==="
 sudo useradd -m -s /bin/bash runner || true
 
