@@ -18,7 +18,9 @@ The corresponding EC2 tags are:
 - `runner-version` — GitHub Actions runner version
 - `jit-runners-version` — jit-runners project version
 - `project` — `jit-runners`
+- `source` — `github.com/devopsfactory-io/jit-runners`
 - `built-by` — `packer`
+- `tools` — comma-separated list of pre-installed tools: `git,docker,python3,node,go,awscli,kubectl,helm,gh,jq,yq,git-lfs,gcc,cmake,make`
 
 PR test builds use the prefix `jit-runner-pr` and are private (not published to the Community AMI catalog). They are automatically deregistered after the build completes.
 
@@ -74,6 +76,8 @@ If you want to customize the AMI or build for a specific runner version, use Pac
 
 - [Packer](https://www.packer.io/downloads) installed (`brew install packer`)
 - AWS credentials configured with EC2 permissions
+
+> **Note:** The Packer source block sets `associate_public_ip_address = true` and `ssh_timeout = "10m"`. The public IP is required so Packer can SSH into the build instance when the default subnet does not auto-assign public IPs. The extended SSH timeout accommodates subnets where IP assignment is slow.
 
 ### Build (source region only)
 
@@ -191,6 +195,8 @@ cd infra/packer && packer build \
   .
 ```
 
+The Packer provisioner copies all scripts under `scripts/` to `/tmp/packer-scripts/` on the build instance and then invokes the extra script as `/tmp/packer-scripts/$(basename <extra_script>)`. Only the filename is used on the remote side, so the script must be placed under `infra/packer/scripts/` (or another directory that gets uploaded) and the `extra_script` value must be a path whose basename is unique within that directory.
+
 Or via the CI workflow (workflow_dispatch), set the `extra_script` input to the script path relative to `infra/packer/`.
 
 ## How it works
@@ -230,7 +236,7 @@ The AMI ships an ubuntu-latest-like toolchain on Amazon Linux 2023, installed by
 | `06-runner-agent.sh` | `runner` OS user, GitHub Actions runner agent at `/home/runner/actions-runner/`, marker file at `/opt/jit-runner-prebaked`, manifest at `/opt/jit-runner-manifest.txt` |
 | `07-cleanup.sh` | DNF cache purge, temp file removal, journal truncation to minimise AMI size; writes final manifest with `jit_runners_version` field |
 
-A validation provisioner runs after all scripts and fails the Packer build if any critical tool is missing (`git`, `docker`, `python3`, `node`, `go`, `aws`, `kubectl`, `helm`, `gh`, `jq`, `yq`, `gcc`, `cmake`, `make`, `git-lfs`).
+A validation provisioner runs after all scripts and fails the Packer build if any critical tool is missing (`git`, `docker`, `docker compose`, `docker buildx`, `python3`, `node`, `go`, `aws`, `kubectl`, `helm`, `gh`, `jq`, `yq`, `gcc`, `cmake`, `make`, `git-lfs`).
 
 The manifest file at `/opt/jit-runner-manifest.txt` records all installed tool versions for traceability.
 

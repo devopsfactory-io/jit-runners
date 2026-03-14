@@ -104,7 +104,7 @@ infra/
   terraform/                # OpenTofu/Terraform IaC (HCL)
   cloudformation/           # AWS CloudFormation template (YAML)
   packer/                   # Packer template for pre-baked runner AMI (AL2023)
-    jit-runner.pkr.hcl      # amazon-ebs source; community AMI catalog publishing; validation provisioner
+    jit-runner.pkr.hcl      # amazon-ebs source; associate_public_ip_address=true + ssh_timeout=10m (fixes SSH to build instance when default subnet has no auto-assign public IP); community AMI catalog publishing controlled by ami_groups; validation provisioner checks all critical tools including docker compose and docker buildx
     variables.pkr.hcl       # runner_version, jit_runners_version, aws_region, ami_regions, ami_distribution_regions, ami_groups, instance_type, extra_script, ami_name_prefix, subnet_id, go_version, node_major_version, volume_size
     scripts/
       setup-runner.sh       # Orchestrator: calls 01–07 sub-scripts in order
