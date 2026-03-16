@@ -247,7 +247,7 @@ The GitHub Actions workflow (`.github/workflows/ami-build.yml`) builds AMIs auto
 - **Runs on**: `ubuntu-latest` (GitHub-hosted runners). The self-hosted runner security group only permits egress on ports 443/80/53 — SSH (port 22) is blocked outbound, which causes Packer to time out when connecting to the build instance. GitHub-hosted runners have unrestricted network access. Using them also avoids the circular dependency of building jit-runner AMIs on the jit-runners infrastructure itself.
 - **Triggers**:
   - `workflow_dispatch` (manual)
-  - Push to `main` when `infra/packer/**` changes — produces a public, distributable AMI
+  - Version tag push (`v*`) — produces a public, distributable AMI matching the release
   - Pull request targeting `main` when `infra/packer/**` changes — produces a private, single-region test AMI that is automatically cleaned up after the build
 - **Inputs**: `runner_version`, `go_version`, `node_major_version`, `jit_runners_version` (auto-detected from git tags if empty), `extra_script`, `distribute` (boolean)
 - **Version auto-detection**: If `jit_runners_version` input is empty, the workflow uses `git describe --tags --always` to derive the version from the most recent tag. On tag pushes (`refs/tags/v*`), it uses the tag name directly.

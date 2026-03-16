@@ -28,9 +28,8 @@ on:
         type: boolean
         default: true
   push:
-    branches: [main]
-    paths:
-      - "infra/packer/**"
+    tags:
+      - "v*"
   pull_request:
     branches: [main]
     paths:

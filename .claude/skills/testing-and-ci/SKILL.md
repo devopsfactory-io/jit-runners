@@ -23,7 +23,7 @@ description: Runs tests, lint, and format checks; explains CI workflows. Use whe
 - **labeler.yml** – On pull_request. Runs actions/labeler with `.github/labeler.yml` (path and head-branch rules).
 - **label-old-prs.yml** – workflow_dispatch. Backfills labels: applies same rules as labeler to head branch and PR title (labeler has no branch context on manual run), then runs the labeler for path-based labels. Use state and limit inputs.
 - **release.yml** – On push of tags `v*.*.*`. Runs GoReleaser to create the GitHub Release with Lambda zip archives.
-- **ami-build.yml** – workflow_dispatch (inputs: `runner_version`, `extra_script`, `distribute`) and auto-trigger on push to `infra/packer/**`. Runs `packer validate` then `packer build`. When `distribute=true`, copies AMI to all distribution regions. Uses OIDC (`AMI_BUILD_ROLE_ARN` secret). Writes AMI ID to the job summary.
+- **ami-build.yml** – workflow_dispatch (inputs: `runner_version`, `extra_script`, `distribute`) and auto-trigger on version tag push (`v*`). PR trigger for `infra/packer/**` changes (private test AMI). Runs `packer validate` then `packer build`. When `distribute=true`, copies AMI to all distribution regions. Uses OIDC (`AMI_BUILD_ROLE_ARN` secret). Writes AMI ID to the job summary.
 
 ## Adding Tests
 
