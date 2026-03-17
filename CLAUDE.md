@@ -141,7 +141,7 @@ Infrastructure lives in `infra/` with three components:
 - **CloudFormation**: `infra/cloudformation/template.yaml` — deploy with `aws cloudformation deploy`
 - **Packer**: `infra/packer/` — build a pre-baked AL2023 AMI with `make ami.build` or `make ami.build-distribute`
 
-See `docs/getting-started-terraform.md` and `docs/getting-started-cloudformation.md` for step-by-step guides.
+See `docs/getting-started-terraform.md` and `docs/getting-started-cloudformation.md` for step-by-step guides. See `docs/troubleshooting.md` for common operational issues and diagnosis commands.
 
 ## CI and Release
 
