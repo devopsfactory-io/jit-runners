@@ -165,9 +165,14 @@ jobs:
           fi
 
       - name: Cleanup PR test AMI
-        if: github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request'
         working-directory: infra/packer
         run: |
+          if [ ! -f manifest.json ]; then
+            echo "No manifest.json found — Packer did not produce an AMI. Skipping cleanup."
+            exit 0
+          fi
+
           AMI_ID=$(jq -r '.builds[-1].artifact_id' manifest.json | cut -d: -f2)
           echo "Cleaning up PR test AMI ${AMI_ID}..."
 
