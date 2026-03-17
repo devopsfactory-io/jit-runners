@@ -28,6 +28,10 @@ func TestGenerateUserData(t *testing.T) {
 				"/opt/jit-runner-prebaked",
 				"dnf install",
 				"pre-baked AMI detected",
+				"git-lfs",
+				"gh-cli.repo",
+				"jq",
+				"rm -f runner.tar.gz",
 			},
 		},
 		{

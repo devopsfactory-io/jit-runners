@@ -7,6 +7,18 @@ on:
         description: "GitHub Actions runner version"
         default: "2.332.0"
         required: true
+      go_version:
+        description: "Go version to pre-install"
+        default: "1.23.6"
+        required: false
+      node_major_version:
+        description: "Node.js major version (LTS) to pre-install"
+        default: "22"
+        required: false
+      jit_runners_version:
+        description: "jit-runners project version (auto-detected from git if empty)"
+        default: ""
+        required: false
       extra_script:
         description: "Path to extra setup script (relative to infra/packer/)"
         default: ""
@@ -16,6 +28,9 @@ on:
         type: boolean
         default: true
   push:
+    tags:
+      - "v*"
+  pull_request:
     branches: [main]
     paths:
       - "infra/packer/**"
@@ -30,9 +45,25 @@ env:
 
 jobs:
   build:
-    runs-on: [self-hosted, medium]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine jit-runners version
+        id: version
+        run: |
+          # Use manual input if provided, otherwise auto-detect
+          if [ -n "${{ inputs.jit_runners_version }}" ]; then
+            VERSION="${{ inputs.jit_runners_version }}"
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "jit-runners version: ${VERSION}"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -52,7 +83,7 @@ jobs:
         run: packer validate -var "runner_version=${{ inputs.runner_version || '2.332.0' }}" .
 
       - name: Disable block public access for AMIs
-        if: ${{ inputs.distribute == true || inputs.distribute == '' }}
+        if: github.event_name != 'pull_request' && (inputs.distribute == true || inputs.distribute == '')
         run: |
           echo "Disabling block public access in source region..."
           aws ec2 disable-image-block-public-access --region us-east-2 || true
@@ -66,11 +97,24 @@ jobs:
         working-directory: infra/packer
         run: |
           RUNNER_VERSION="${{ inputs.runner_version || '2.332.0' }}"
-          DISTRIBUTE="${{ inputs.distribute || 'true' }}"
-          ARGS="-var runner_version=${RUNNER_VERSION}"
+          GO_VERSION="${{ inputs.go_version || '1.23.6' }}"
+          NODE_MAJOR="${{ inputs.node_major_version || '22' }}"
+          JIT_VERSION="${{ steps.version.outputs.version }}"
 
-          if [ "${DISTRIBUTE}" = "true" ]; then
-            ARGS="${ARGS} -var ami_regions=[\"us-east-1\",\"us-west-1\",\"us-west-2\",\"eu-west-1\",\"eu-west-2\",\"eu-west-3\",\"eu-central-1\",\"eu-north-1\",\"sa-east-1\"]"
+          ARGS="-var runner_version=${RUNNER_VERSION}"
+          ARGS="${ARGS} -var go_version=${GO_VERSION}"
+          ARGS="${ARGS} -var node_major_version=${NODE_MAJOR}"
+          ARGS="${ARGS} -var jit_runners_version=${JIT_VERSION}"
+
+          # PR builds: private AMI, no distribution, distinct prefix
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            ARGS="${ARGS} -var ami_groups=[]"
+            ARGS="${ARGS} -var ami_name_prefix=jit-runner-pr"
+          else
+            DISTRIBUTE="${{ inputs.distribute || 'true' }}"
+            if [ "${DISTRIBUTE}" = "true" ]; then
+              ARGS="${ARGS} -var ami_regions=[\"us-east-1\",\"us-west-1\",\"us-west-2\",\"eu-west-1\",\"eu-west-2\",\"eu-west-3\",\"eu-central-1\",\"eu-north-1\",\"sa-east-1\"]"
+            fi
           fi
 
           if [ -n "${{ inputs.extra_script }}" ]; then
@@ -84,21 +128,64 @@ jobs:
         run: |
           AMI_ID=$(jq -r '.builds[-1].artifact_id' manifest.json | cut -d: -f2)
           RUNNER_VERSION="${{ inputs.runner_version || '2.332.0' }}"
-          DISTRIBUTE="${{ inputs.distribute || 'true' }}"
+          JIT_VERSION="${{ steps.version.outputs.version }}"
 
-          echo "## AMI Build Complete" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "## PR Test AMI Build" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## AMI Build Complete" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
           echo "| ----- | ----- |" >> "$GITHUB_STEP_SUMMARY"
           echo "| AMI ID (source) | \`${AMI_ID}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| jit-runners Version | ${JIT_VERSION} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Runner Version | ${RUNNER_VERSION} |" >> "$GITHUB_STEP_SUMMARY"
+
+          GO_VERSION="${{ inputs.go_version || '1.23.6' }}"
+          NODE_MAJOR="${{ inputs.node_major_version || '22' }}"
+          echo "| Go Version | ${GO_VERSION} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Node.js | ${NODE_MAJOR}.x LTS |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Source Region | us-east-2 |" >> "$GITHUB_STEP_SUMMARY"
 
-          if [ "${DISTRIBUTE}" = "true" ]; then
-            echo "| Distributed To | us-east-1, us-west-1, us-west-2, eu-west-1, eu-west-2, eu-west-3, eu-central-1, eu-north-1, sa-east-1 |" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "| Distributed To | _(none — PR test build)_ |" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "This AMI will be cleaned up after the build." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "| Distributed To | _(none — source region only)_ |" >> "$GITHUB_STEP_SUMMARY"
+            DISTRIBUTE="${{ inputs.distribute || 'true' }}"
+            if [ "${DISTRIBUTE}" = "true" ]; then
+              echo "| Distributed To | us-east-1, us-west-1, us-west-2, eu-west-1, eu-west-2, eu-west-3, eu-central-1, eu-north-1, sa-east-1 |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "| Distributed To | _(none — source region only)_ |" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Use this AMI as \`DefaultAMI\` in CloudFormation or \`default_ami\` in Terraform." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Use this AMI as \`DefaultAMI\` in CloudFormation or \`default_ami\` in Terraform." >> "$GITHUB_STEP_SUMMARY"
+      - name: Cleanup PR test AMI
+        if: always() && github.event_name == 'pull_request'
+        working-directory: infra/packer
+        run: |
+          if [ ! -f manifest.json ]; then
+            echo "No manifest.json found — Packer did not produce an AMI. Skipping cleanup."
+            exit 0
+          fi
+
+          AMI_ID=$(jq -r '.builds[-1].artifact_id' manifest.json | cut -d: -f2)
+          echo "Cleaning up PR test AMI ${AMI_ID}..."
+
+          # Get snapshot IDs before deregistering
+          SNAPSHOT_IDS=$(aws ec2 describe-images --image-ids "${AMI_ID}" --region us-east-2 \
+            --query 'Images[0].BlockDeviceMappings[].Ebs.SnapshotId' --output text) || true
+
+          echo "Deregistering AMI ${AMI_ID}..."
+          aws ec2 deregister-image --image-id "${AMI_ID}" --region us-east-2
+
+          for snap in ${SNAPSHOT_IDS}; do
+            echo "Deleting snapshot ${snap}..."
+            aws ec2 delete-snapshot --snapshot-id "${snap}" --region us-east-2 || true
+          done
+
+          echo "PR test AMI cleaned up."

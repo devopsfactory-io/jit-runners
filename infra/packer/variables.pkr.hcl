@@ -57,3 +57,33 @@ variable "subnet_id" {
   default     = ""
   description = "Subnet ID for the build instance (optional, uses default VPC if empty)."
 }
+
+variable "go_version" {
+  type        = string
+  default     = "1.23.6"
+  description = "Go version to pre-install in the AMI."
+}
+
+variable "node_major_version" {
+  type        = string
+  default     = "22"
+  description = "Node.js major version (LTS) to pre-install in the AMI."
+}
+
+variable "volume_size" {
+  type        = number
+  default     = 30
+  description = "Root EBS volume size in GB for the AMI."
+}
+
+variable "ami_groups" {
+  type        = list(string)
+  default     = ["all"]
+  description = "Launch permission groups. Use [\"all\"] for public, [] for private."
+}
+
+variable "jit_runners_version" {
+  type        = string
+  default     = "dev"
+  description = "jit-runners project version (e.g. v0.3.0). Defaults to 'dev' for local builds."
+}
