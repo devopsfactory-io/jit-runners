@@ -19,6 +19,8 @@ on:
     branches: [main]
     paths:
       - "infra/packer/**"
+    tags:
+      - "v*"
 
 permissions:
   contents: read
