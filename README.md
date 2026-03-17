@@ -33,6 +33,7 @@
 - **Getting started (Terraform)**: [docs/getting-started-terraform.md](docs/getting-started-terraform.md)
 - **Getting started (CloudFormation)**: [docs/getting-started-cloudformation.md](docs/getting-started-cloudformation.md)
 - **GitHub App setup**: [docs/github-app-setup.md](docs/github-app-setup.md) - Create and configure the GitHub App that sends `workflow_job` webhooks.
+- **Troubleshooting**: [docs/troubleshooting.md](docs/troubleshooting.md) - Common operational issues, diagnosis commands, and resolutions.
 - **Contributing**: [CLAUDE.md](CLAUDE.md) for AI and contributor guidance.
 
 ## What is jit-runners?
