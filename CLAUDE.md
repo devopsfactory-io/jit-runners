@@ -156,14 +156,20 @@ Applies to `.github/**/*.yml`, `Makefile`, `.goreleaser.yml`:
 
 ## Agents, Commands, and Skills
 
-Available in `.claude/`:
+Agents are managed centrally in the [code-agent-hub](https://github.com/devopsfactory-io/code-agent-hub) at `.claude/agents/<role>/AGENTS.md`, each loading project-specific context from `.claude/skills/jit-runners/<role>/SKILL.md`. Commands and skills remain local in `.claude/`:
 
-| Type | Name | Purpose |
-| ---- | ---- | ------- |
-| Agent | `documentation-maintainer` | Runs full doc checklist after code/IaC/CI changes |
-| Agent | `issue-reviewer` | Triages open issues; validates drafts before upload |
-| Agent | `issue-writer` | Creates GitHub issues from `/feature` and `/bug` commands |
-| Agent | `pr-reviewer` | Reviews PRs via `gh` CLI — DCO, Go style, tests, IaC, docs |
+| Type | Name | Purpose | Location |
+| ---- | ---- | ------- | -------- |
+| Agent | `documentation-maintainer` | Runs full doc checklist after code/IaC/CI changes | hub |
+| Agent | `em` | Engineering Manager — coordinates jit-runners team | hub |
+| Agent | `go-developer` | Go implementation for jit-runners Lambda | hub |
+| Agent | `iac-developer` | IaC modules and GitHub Actions | hub |
+| Agent | `issue-reviewer` | Triages open issues; validates drafts before upload | hub |
+| Agent | `issue-writer` | Creates GitHub issues from `/feature` and `/bug` commands | hub |
+| Agent | `platform-engineering` | GitOps, CI/CD, observability | hub |
+| Agent | `pr-reviewer` | Reviews PRs via `gh` CLI — DCO, Go style, tests, docs | hub |
+| Agent | `qa` | Code quality and test coverage | hub |
+| Agent | `security` | Security scanning for code and IaC | hub |
 | Command | `/bug` | Create a bug report (invokes issue-writer) |
 | Command | `/feature` | Create a feature request (invokes issue-writer) |
 | Skill | `maintain-documentation` | Delegates doc updates to documentation-maintainer agent |
