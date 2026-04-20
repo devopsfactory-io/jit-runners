@@ -16,7 +16,7 @@ import (
 type Config struct {
 	// GitHub App credentials.
 	AppID         string
-	PrivateKey    string
+	PrivateKey    string //nolint:gosec // G117: not a hardcoded credential, loaded from env/secrets manager
 	WebhookSecret string
 
 	// SQS queue URL for scale-up messages.

@@ -77,7 +77,7 @@ func installationTokenWithBase(ctx context.Context, appID, privateKeyPEM string,
 	req.Header.Set("Authorization", "Bearer "+jwtStr)
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: URL from GitHub API constant
 	if err != nil {
 		return "", fmt.Errorf("request installation token: %w", err)
 	}
@@ -126,7 +126,7 @@ func (c *Client) GenerateJITConfig(ctx context.Context, ownerRepo string, name s
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: URL from GitHub API constant
 	if err != nil {
 		return nil, fmt.Errorf("request JIT config: %w", err)
 	}
