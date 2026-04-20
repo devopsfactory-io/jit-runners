@@ -11,19 +11,19 @@ import (
 
 const defaultDelaySeconds = 30
 
-// SQSSender abstracts the SQS SendMessage API for testing.
-type SQSSender interface {
+// Sender abstracts the SQS SendMessage API for testing.
+type Sender interface {
 	SendMessage(ctx context.Context, input *sqs.SendMessageInput, opts ...func(*sqs.Options)) (*sqs.SendMessageOutput, error)
 }
 
 // Publisher sends scale-up messages to SQS.
 type Publisher struct {
-	client   SQSSender
+	client   Sender
 	queueURL string
 }
 
 // NewPublisher creates a Publisher for the given queue URL.
-func NewPublisher(client SQSSender, queueURL string) *Publisher {
+func NewPublisher(client Sender, queueURL string) *Publisher {
 	return &Publisher{
 		client:   client,
 		queueURL: queueURL,
