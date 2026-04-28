@@ -58,21 +58,8 @@ func (c *Cleaner) Run(ctx context.Context) (*CleanupResult, error) {
 		return result, err
 	}
 	staleThreshold := now - int64(c.staleThresholdMinutes*60)
-	for _, r := range pending {
-		if r.CreatedAt < staleThreshold {
-			log.Printf("cleanup: terminating stale pending runner %s (instance %s)", r.RunnerID, r.InstanceID)
-			if err := c.ec2.Terminate(ctx, r.InstanceID); err != nil {
-				log.Printf("cleanup: failed to terminate %s: %v", r.InstanceID, err)
-				result.Errors++
-				continue
-			}
-			if err := c.store.UpdateStatus(ctx, r.Repository, r.JobID, StatusFailed); err != nil {
-				log.Printf("cleanup: failed to update status for %s: %v", r.RunnerID, err)
-				result.Errors++
-				continue
-			}
-			result.StaleTerminated++
-		}
+	if err := c.cleanupStaleInstances(ctx, pending, staleThreshold, "pending", result); err != nil {
+		return result, err
 	}
 
 	// 2. Clean up stuck "running" instances.
@@ -81,29 +68,11 @@ func (c *Cleaner) Run(ctx context.Context) (*CleanupResult, error) {
 		return result, err
 	}
 	maxAgeThreshold := now - int64(c.maxAgeMinutes*60)
-	for _, r := range running {
-		if r.CreatedAt < maxAgeThreshold {
-			log.Printf("cleanup: terminating stuck running runner %s (instance %s)", r.RunnerID, r.InstanceID)
-			if err := c.ec2.Terminate(ctx, r.InstanceID); err != nil {
-				log.Printf("cleanup: failed to terminate %s: %v", r.InstanceID, err)
-				result.Errors++
-				continue
-			}
-			if err := c.store.UpdateStatus(ctx, r.Repository, r.JobID, StatusFailed); err != nil {
-				log.Printf("cleanup: failed to update status for %s: %v", r.RunnerID, err)
-				result.Errors++
-				continue
-			}
-			result.StaleTerminated++
-		}
+	if err := c.cleanupStaleInstances(ctx, running, maxAgeThreshold, "running", result); err != nil {
+		return result, err
 	}
 
 	// 3. Detect orphaned EC2 instances (tagged but not in DynamoDB).
-	managedIDs, err := c.ec2.ListManagedInstances(ctx)
-	if err != nil {
-		return result, err
-	}
-	knownIDs := make(map[string]bool)
 	allRecords := append(pending, running...)
 	completed, err := c.store.ListByStatus(ctx, StatusCompleted)
 	if err != nil {
@@ -115,7 +84,43 @@ func (c *Cleaner) Run(ctx context.Context) (*CleanupResult, error) {
 	}
 	allRecords = append(allRecords, completed...)
 	allRecords = append(allRecords, failed...)
-	for _, r := range allRecords {
+
+	if err := c.reconcileOrphanInstances(ctx, allRecords, result); err != nil {
+		return result, err
+	}
+
+	return result, nil
+}
+
+// cleanupStaleInstances terminates instances that have been in the given status longer than the threshold.
+func (c *Cleaner) cleanupStaleInstances(ctx context.Context, records []*Record, threshold int64, statusLabel string, result *CleanupResult) error {
+	for _, r := range records {
+		if r.CreatedAt < threshold {
+			log.Printf("cleanup: terminating stale %s runner %s (instance %s)", statusLabel, r.RunnerID, r.InstanceID)
+			if err := c.ec2.Terminate(ctx, r.InstanceID); err != nil {
+				log.Printf("cleanup: failed to terminate %s: %v", r.InstanceID, err)
+				result.Errors++
+				continue
+			}
+			if err := c.store.UpdateStatus(ctx, r.Repository, r.JobID, StatusFailed); err != nil {
+				log.Printf("cleanup: failed to update status for %s: %v", r.RunnerID, err)
+				result.Errors++
+				continue
+			}
+			result.StaleTerminated++
+		}
+	}
+	return nil
+}
+
+// reconcileOrphanInstances finds EC2 instances not tracked in DynamoDB and terminates them.
+func (c *Cleaner) reconcileOrphanInstances(ctx context.Context, knownRecords []*Record, result *CleanupResult) error {
+	managedIDs, err := c.ec2.ListManagedInstances(ctx)
+	if err != nil {
+		return err
+	}
+	knownIDs := make(map[string]bool)
+	for _, r := range knownRecords {
 		knownIDs[r.InstanceID] = true
 	}
 	for _, id := range managedIDs {
@@ -129,6 +134,5 @@ func (c *Cleaner) Run(ctx context.Context) (*CleanupResult, error) {
 			result.OrphanTerminated++
 		}
 	}
-
-	return result, nil
+	return nil
 }

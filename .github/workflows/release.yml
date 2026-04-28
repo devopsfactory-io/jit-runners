@@ -5,11 +5,12 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   release:
+    permissions:
+      contents: write
     runs-on: [self-hosted, release]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6

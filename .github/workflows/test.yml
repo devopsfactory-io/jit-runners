@@ -6,12 +6,13 @@ on:
   pull_request:
     branches: [main]
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   test:
     name: fmt, vet, test and coverage
+    permissions:
+      contents: read
     runs-on: [self-hosted, large]
     defaults:
       run:
@@ -37,6 +38,8 @@ jobs:
 
   lint:
     name: lint
+    permissions:
+      contents: read
     runs-on: [self-hosted, large]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6

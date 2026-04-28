@@ -9,8 +9,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
 
-// EC2API abstracts the EC2 RunInstances API for testing.
-type EC2API interface {
+// API abstracts the EC2 RunInstances API for testing.
+type API interface {
 	RunInstances(ctx context.Context, input *ec2.RunInstancesInput, opts ...func(*ec2.Options)) (*ec2.RunInstancesOutput, error)
 	TerminateInstances(ctx context.Context, input *ec2.TerminateInstancesInput, opts ...func(*ec2.Options)) (*ec2.TerminateInstancesOutput, error)
 	DescribeInstances(ctx context.Context, input *ec2.DescribeInstancesInput, opts ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error)
@@ -18,11 +18,11 @@ type EC2API interface {
 
 // Launcher manages EC2 instance lifecycle for runners.
 type Launcher struct {
-	client EC2API
+	client API
 }
 
 // NewLauncher creates a Launcher with the given EC2 client.
-func NewLauncher(client EC2API) *Launcher {
+func NewLauncher(client API) *Launcher {
 	return &Launcher{client: client}
 }
 

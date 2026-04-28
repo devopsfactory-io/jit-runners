@@ -16,7 +16,7 @@ import (
 type Config struct {
 	// GitHub App credentials.
 	AppID         string
-	PrivateKey    string
+	PrivateKey    string //nolint:gosec // G117: not a hardcoded credential, loaded from env/secrets manager
 	WebhookSecret string
 
 	// SQS queue URL for scale-up messages.
@@ -72,14 +72,8 @@ func LoadWithClient(ctx context.Context, client SecretsReader) (*Config, error) 
 		DefaultAMI:         os.Getenv("EC2_DEFAULT_AMI"),
 	}
 
-	if cfg.AppID == "" {
-		return nil, fmt.Errorf("GITHUB_APP_ID is required")
-	}
-	if cfg.QueueURL == "" {
-		return nil, fmt.Errorf("SQS_QUEUE_URL is required")
-	}
-	if cfg.TableName == "" {
-		return nil, fmt.Errorf("DYNAMODB_TABLE_NAME is required")
+	if err := validateRequiredEnv(cfg); err != nil {
+		return nil, err
 	}
 
 	// Parse subnet IDs (comma-separated).
@@ -94,7 +88,29 @@ func LoadWithClient(ctx context.Context, client SecretsReader) (*Config, error) 
 		}
 	}
 
-	// Load secrets.
+	if err := loadSecrets(ctx, cfg, client); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+// validateRequiredEnv checks that required environment variables are set on the config.
+func validateRequiredEnv(cfg *Config) error {
+	if cfg.AppID == "" {
+		return fmt.Errorf("GITHUB_APP_ID is required")
+	}
+	if cfg.QueueURL == "" {
+		return fmt.Errorf("SQS_QUEUE_URL is required")
+	}
+	if cfg.TableName == "" {
+		return fmt.Errorf("DYNAMODB_TABLE_NAME is required")
+	}
+	return nil
+}
+
+// loadSecrets loads webhook secret and private key from Secrets Manager or environment.
+func loadSecrets(ctx context.Context, cfg *Config, client SecretsReader) error {
 	webhookSecretARN := os.Getenv("GITHUB_APP_WEBHOOK_SECRET_ARN")
 	privateKeyARN := os.Getenv("GITHUB_APP_PRIVATE_KEY_SECRET_ARN")
 
@@ -102,14 +118,14 @@ func LoadWithClient(ctx context.Context, client SecretsReader) (*Config, error) 
 		if client == nil {
 			awsCfg, err := config.LoadDefaultConfig(ctx)
 			if err != nil {
-				return nil, fmt.Errorf("load AWS config: %w", err)
+				return fmt.Errorf("load AWS config: %w", err)
 			}
 			client = secretsmanager.NewFromConfig(awsCfg)
 		}
 		if webhookSecretARN != "" {
 			secret, err := getSecret(ctx, client, webhookSecretARN)
 			if err != nil {
-				return nil, fmt.Errorf("webhook secret: %w", err)
+				return fmt.Errorf("webhook secret: %w", err)
 			}
 			cfg.WebhookSecret = secret
 		} else {
@@ -118,7 +134,7 @@ func LoadWithClient(ctx context.Context, client SecretsReader) (*Config, error) 
 		if privateKeyARN != "" {
 			secret, err := getSecret(ctx, client, privateKeyARN)
 			if err != nil {
-				return nil, fmt.Errorf("private key: %w", err)
+				return fmt.Errorf("private key: %w", err)
 			}
 			cfg.PrivateKey = secret
 		} else {
@@ -130,12 +146,12 @@ func LoadWithClient(ctx context.Context, client SecretsReader) (*Config, error) 
 	}
 
 	if cfg.WebhookSecret == "" {
-		return nil, fmt.Errorf("webhook secret is required (GITHUB_APP_WEBHOOK_SECRET or GITHUB_APP_WEBHOOK_SECRET_ARN)")
+		return fmt.Errorf("webhook secret is required (GITHUB_APP_WEBHOOK_SECRET or GITHUB_APP_WEBHOOK_SECRET_ARN)")
 	}
 	if cfg.PrivateKey == "" {
-		return nil, fmt.Errorf("private key is required (GITHUB_APP_PRIVATE_KEY or GITHUB_APP_PRIVATE_KEY_SECRET_ARN)")
+		return fmt.Errorf("private key is required (GITHUB_APP_PRIVATE_KEY or GITHUB_APP_PRIVATE_KEY_SECRET_ARN)")
 	}
-	return cfg, nil
+	return nil
 }
 
 func getSecret(ctx context.Context, client SecretsReader, arn string) (string, error) {
