@@ -6,6 +6,10 @@ Parameters:
     Type: String
     Description: GitHub App ID (numeric).
 
+  GitHubInstallationId:
+    Type: String
+    Description: GitHub App installation ID (numeric) used by lifecycle and scaledown for installation-token minting.
+
   LambdaS3Bucket:
     Type: String
     Description: S3 bucket containing the Lambda deployment packages.
@@ -21,6 +25,10 @@ Parameters:
   ScaleDownLambdaS3Key:
     Type: String
     Description: S3 key for the scale-down Lambda zip.
+
+  LifecycleLambdaS3Key:
+    Type: String
+    Description: S3 key for the lifecycle Lambda zip.
 
   WebhookSecretArn:
     Type: String
@@ -56,6 +64,13 @@ Parameters:
     Type: Number
     Default: 360
     Description: Maximum age in minutes before a running instance is force-terminated.
+
+  MaxReEnqueueAttempts:
+    Type: Number
+    Default: 3
+    MinValue: 1
+    MaxValue: 10
+    Description: Max re-enqueue attempts before a stuck pending job goes terminal.
 
 Resources:
   # --- DynamoDB ---
@@ -96,6 +111,22 @@ Resources:
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt ScaleUpDLQ.Arn
         maxReceiveCount: 3
+
+  LifecycleQueueDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-lifecycle-dlq"
+      MessageRetentionPeriod: 1209600
+
+  LifecycleQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-lifecycle"
+      VisibilityTimeout: 90
+      MessageRetentionPeriod: 86400
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt LifecycleQueueDLQ.Arn
+        maxReceiveCount: 5
 
   # --- EC2 Security Group ---
 
@@ -188,6 +219,9 @@ Resources:
                 Action: sqs:SendMessage
                 Resource: !GetAtt ScaleUpQueue.Arn
               - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt LifecycleQueue.Arn
+              - Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource:
                   - !Ref WebhookSecretArn
@@ -209,9 +243,11 @@ Resources:
       Environment:
         Variables:
           GITHUB_APP_ID: !Ref GitHubAppId
+          GITHUB_INSTALLATION_ID: !Ref GitHubInstallationId
           GITHUB_APP_WEBHOOK_SECRET_ARN: !Ref WebhookSecretArn
           GITHUB_APP_PRIVATE_KEY_SECRET_ARN: !Ref PrivateKeySecretArn
           SQS_QUEUE_URL: !Ref ScaleUpQueue
+          LIFECYCLE_QUEUE_URL: !Ref LifecycleQueue
           DYNAMODB_TABLE_NAME: !Ref RunnersTable
 
   WebhookLogGroup:
@@ -320,6 +356,7 @@ Resources:
       Environment:
         Variables:
           GITHUB_APP_ID: !Ref GitHubAppId
+          GITHUB_INSTALLATION_ID: !Ref GitHubInstallationId
           GITHUB_APP_WEBHOOK_SECRET_ARN: !Ref WebhookSecretArn
           GITHUB_APP_PRIVATE_KEY_SECRET_ARN: !Ref PrivateKeySecretArn
           SQS_QUEUE_URL: !Ref ScaleUpQueue
@@ -374,6 +411,9 @@ Resources:
                   - ec2:TerminateInstances
                 Resource: "*"
               - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt ScaleUpQueue.Arn
+              - Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource:
                   - !Ref WebhookSecretArn
@@ -395,18 +435,94 @@ Resources:
       Environment:
         Variables:
           GITHUB_APP_ID: !Ref GitHubAppId
+          GITHUB_INSTALLATION_ID: !Ref GitHubInstallationId
           GITHUB_APP_WEBHOOK_SECRET_ARN: !Ref WebhookSecretArn
           GITHUB_APP_PRIVATE_KEY_SECRET_ARN: !Ref PrivateKeySecretArn
           SQS_QUEUE_URL: !Ref ScaleUpQueue
+          SCALEUP_QUEUE_URL: !Ref ScaleUpQueue
           DYNAMODB_TABLE_NAME: !Ref RunnersTable
           STALE_THRESHOLD_MINUTES: !Ref StaleThresholdMinutes
           MAX_RUNNER_AGE_MINUTES: !Ref MaxRunnerAgeMinutes
+          MAX_RE_ENQUEUE_ATTEMPTS: !Ref MaxReEnqueueAttempts
 
   ScaleDownLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-scaledown"
       RetentionInDays: 14
+
+  # --- Lifecycle Lambda ---
+
+  LifecycleFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-lifecycle-lambda"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: lifecycle-permissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - sqs:ChangeMessageVisibility
+                Resource: !GetAtt LifecycleQueue.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt RunnersTable.Arn
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref PrivateKeySecretArn
+
+  LifecycleFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-lifecycle"
+      Description: Consumes lifecycle events; updates DDB through pending/running/completed and deregisters runners.
+      Runtime: provided.al2023
+      Handler: bootstrap
+      Architectures: [x86_64]
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref LifecycleLambdaS3Key
+      Timeout: 30
+      MemorySize: 128
+      Role: !GetAtt LifecycleFunctionRole.Arn
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref RunnersTable
+          DYNAMODB_TABLE_NAME: !Ref RunnersTable
+          GITHUB_APP_ID: !Ref GitHubAppId
+          GITHUB_INSTALLATION_ID: !Ref GitHubInstallationId
+          PRIVATE_KEY_SECRET_ARN: !Ref PrivateKeySecretArn
+          GITHUB_APP_PRIVATE_KEY_SECRET_ARN: !Ref PrivateKeySecretArn
+
+  LifecycleLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-lifecycle"
+      RetentionInDays: 14
+
+  LifecycleFunctionEventSource:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt LifecycleQueue.Arn
+      FunctionName: !Ref LifecycleFunction
+      BatchSize: 10
+      MaximumBatchingWindowInSeconds: 1
 
   # --- EventBridge Scheduler ---
 
@@ -459,6 +575,18 @@ Outputs:
   ScaleDownLambdaArn:
     Description: ARN of the scale-down Lambda function.
     Value: !GetAtt ScaleDownFunction.Arn
+
+  LifecycleFunctionArn:
+    Description: ARN of the lifecycle Lambda function.
+    Value: !GetAtt LifecycleFunction.Arn
+
+  LifecycleQueueUrl:
+    Description: SQS queue URL for lifecycle messages (workflow_job in_progress / completed).
+    Value: !Ref LifecycleQueue
+
+  LifecycleQueueDLQUrl:
+    Description: SQS DLQ URL for lifecycle messages.
+    Value: !Ref LifecycleQueueDLQ
 
   DynamoDBTableName:
     Description: DynamoDB table name for runner state.

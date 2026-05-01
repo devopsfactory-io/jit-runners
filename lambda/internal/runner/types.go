@@ -1,27 +1,41 @@
 package runner
 
-import "time"
+import (
+	"time"
 
-// Status constants for runner records.
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
+)
+
+// Runner is an alias for state.Runner. The lifecycle work uses
+// state.RunnerStore directly; aliasing here keeps callers that import
+// runner.Runner working without modification (Go type aliases are transparent).
+// New code should prefer state.Runner.
+type Runner = state.Runner
+
+// Status constants are re-exported from the canonical state package so
+// callers that historically used runner.Status* keep compiling.
 const (
-	StatusPending   = "pending"
-	StatusRunning   = "running"
-	StatusCompleted = "completed"
-	StatusFailed    = "failed"
+	StatusPending   = state.StatusPending
+	StatusRunning   = state.StatusRunning
+	StatusCompleted = state.StatusCompleted
+	StatusFailed    = state.StatusFailed
 )
 
 // Record is the DynamoDB state record for an active runner.
 type Record struct {
-	RunnerID   string   `dynamodbav:"runner_id"`
-	InstanceID string   `dynamodbav:"instance_id"`
-	JobID      int64    `dynamodbav:"job_id"`
-	RunID      int64    `dynamodbav:"run_id"`
-	Repository string   `dynamodbav:"repository"`
-	Labels     []string `dynamodbav:"labels"`
-	Status     string   `dynamodbav:"status"`
-	CreatedAt  int64    `dynamodbav:"created_at"`
-	UpdatedAt  int64    `dynamodbav:"updated_at"`
-	TTL        int64    `dynamodbav:"ttl"`
+	RunnerID          string   `dynamodbav:"runner_id"`
+	InstanceID        string   `dynamodbav:"instance_id"`
+	JobID             int64    `dynamodbav:"job_id"`
+	RunID             int64    `dynamodbav:"run_id"`
+	Repository        string   `dynamodbav:"repository"`
+	Labels            []string `dynamodbav:"labels"`
+	Status            string   `dynamodbav:"status"`
+	CreatedAt         int64    `dynamodbav:"created_at"`
+	UpdatedAt         int64    `dynamodbav:"updated_at"`
+	TTL               int64    `dynamodbav:"ttl"`
+	GitHubRunnerID    int64    `dynamodbav:"gh_runner_id,omitempty"`
+	ReEnqueueAttempts int      `dynamodbav:"re_enqueue_attempts,omitempty"`
+	LastAttemptAt     int64    `dynamodbav:"last_attempt_at,omitempty"`
 }
 
 // NewRecord creates a runner record with sensible defaults.

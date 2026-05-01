@@ -23,3 +23,27 @@ resource "aws_sqs_queue" "scaleup_dlq" {
     Name = "${var.project_name}-scaleup-dlq"
   }
 }
+
+resource "aws_sqs_queue" "lifecycle_dlq" {
+  name                      = "${var.project_name}-lifecycle-dlq"
+  message_retention_seconds = 1209600 # 14 days
+
+  tags = {
+    Name = "${var.project_name}-lifecycle-dlq"
+  }
+}
+
+resource "aws_sqs_queue" "lifecycle" {
+  name                       = "${var.project_name}-lifecycle"
+  visibility_timeout_seconds = 90
+  message_retention_seconds  = 86400 # 24 hours
+
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.lifecycle_dlq.arn
+    maxReceiveCount     = 5
+  })
+
+  tags = {
+    Name = "${var.project_name}-lifecycle"
+  }
+}

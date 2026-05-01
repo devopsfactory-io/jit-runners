@@ -8,4 +8,9 @@ type ScaleUpMessage struct {
 	RepositoryFull string   `json:"repository_full"`
 	Labels         []string `json:"labels"`
 	InstallationID int64    `json:"installation_id"`
+
+	// ReEnqueueAttempts is incremented by scaledown each time a stuck pending
+	// runner triggers a re-enqueue. Scaleup uses it as a budget check (skip
+	// launch when attempts >= MaxReEnqueueAttempts). Default zero.
+	ReEnqueueAttempts int `json:"re_enqueue_attempts,omitempty"`
 }

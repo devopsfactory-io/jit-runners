@@ -15,11 +15,13 @@ resource "aws_lambda_function" "webhook" {
 
   environment {
     variables = {
-      GITHUB_APP_ID                    = var.github_app_id
-      GITHUB_APP_WEBHOOK_SECRET_ARN    = var.webhook_secret_arn
+      GITHUB_APP_ID                     = var.github_app_id
+      GITHUB_INSTALLATION_ID            = var.github_installation_id
+      GITHUB_APP_WEBHOOK_SECRET_ARN     = var.webhook_secret_arn
       GITHUB_APP_PRIVATE_KEY_SECRET_ARN = var.private_key_arn
-      SQS_QUEUE_URL                    = aws_sqs_queue.scaleup.url
-      DYNAMODB_TABLE_NAME              = aws_dynamodb_table.runners.name
+      SQS_QUEUE_URL                     = aws_sqs_queue.scaleup.url
+      LIFECYCLE_QUEUE_URL               = aws_sqs_queue.lifecycle.url
+      DYNAMODB_TABLE_NAME               = aws_dynamodb_table.runners.name
     }
   }
 
@@ -50,16 +52,17 @@ resource "aws_lambda_function" "scaleup" {
 
   environment {
     variables = {
-      GITHUB_APP_ID                    = var.github_app_id
-      GITHUB_APP_WEBHOOK_SECRET_ARN    = var.webhook_secret_arn
+      GITHUB_APP_ID                     = var.github_app_id
+      GITHUB_INSTALLATION_ID            = var.github_installation_id
+      GITHUB_APP_WEBHOOK_SECRET_ARN     = var.webhook_secret_arn
       GITHUB_APP_PRIVATE_KEY_SECRET_ARN = var.private_key_arn
-      SQS_QUEUE_URL                    = aws_sqs_queue.scaleup.url
-      DYNAMODB_TABLE_NAME              = aws_dynamodb_table.runners.name
-      EC2_SUBNET_IDS                   = join(",", var.subnet_ids)
-      EC2_SECURITY_GROUP_ID            = aws_security_group.runner.id
-      EC2_IAM_INSTANCE_PROFILE         = aws_iam_instance_profile.runner.name
-      EC2_DEFAULT_AMI                  = var.default_ami
-      LABEL_MAPPINGS                   = var.label_mappings
+      SQS_QUEUE_URL                     = aws_sqs_queue.scaleup.url
+      DYNAMODB_TABLE_NAME               = aws_dynamodb_table.runners.name
+      EC2_SUBNET_IDS                    = join(",", var.subnet_ids)
+      EC2_SECURITY_GROUP_ID             = aws_security_group.runner.id
+      EC2_IAM_INSTANCE_PROFILE          = aws_iam_instance_profile.runner.name
+      EC2_DEFAULT_AMI                   = var.default_ami
+      LABEL_MAPPINGS                    = var.label_mappings
     }
   }
 
@@ -96,13 +99,16 @@ resource "aws_lambda_function" "scaledown" {
 
   environment {
     variables = {
-      GITHUB_APP_ID                    = var.github_app_id
-      GITHUB_APP_WEBHOOK_SECRET_ARN    = var.webhook_secret_arn
+      GITHUB_APP_ID                     = var.github_app_id
+      GITHUB_INSTALLATION_ID            = var.github_installation_id
+      GITHUB_APP_WEBHOOK_SECRET_ARN     = var.webhook_secret_arn
       GITHUB_APP_PRIVATE_KEY_SECRET_ARN = var.private_key_arn
-      SQS_QUEUE_URL                    = aws_sqs_queue.scaleup.url
-      DYNAMODB_TABLE_NAME              = aws_dynamodb_table.runners.name
-      STALE_THRESHOLD_MINUTES          = tostring(var.stale_threshold_minutes)
-      MAX_RUNNER_AGE_MINUTES           = tostring(var.max_runner_age_minutes)
+      SQS_QUEUE_URL                     = aws_sqs_queue.scaleup.url
+      SCALEUP_QUEUE_URL                 = aws_sqs_queue.scaleup.url
+      DYNAMODB_TABLE_NAME               = aws_dynamodb_table.runners.name
+      STALE_THRESHOLD_MINUTES           = tostring(var.stale_threshold_minutes)
+      MAX_RUNNER_AGE_MINUTES            = tostring(var.max_runner_age_minutes)
+      MAX_RE_ENQUEUE_ATTEMPTS           = tostring(var.max_re_enqueue_attempts)
     }
   }
 
@@ -153,6 +159,11 @@ resource "aws_iam_role_policy" "webhook_lambda" {
         Effect   = "Allow"
         Action   = ["sqs:SendMessage"]
         Resource = aws_sqs_queue.scaleup.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = aws_sqs_queue.lifecycle.arn
       },
       {
         Effect = "Allow"
@@ -292,12 +303,125 @@ resource "aws_iam_role_policy" "scaledown_lambda" {
         Resource = "*"
       },
       {
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = aws_sqs_queue.scaleup.arn
+      },
+      {
         Effect = "Allow"
         Action = ["secretsmanager:GetSecretValue"]
         Resource = [
           var.webhook_secret_arn,
           var.private_key_arn,
         ]
+      },
+    ]
+  })
+}
+
+# --- Lifecycle Lambda ---
+
+resource "aws_lambda_function" "lifecycle" {
+  function_name = "${var.project_name}-lifecycle"
+  handler       = "bootstrap"
+  runtime       = "provided.al2023"
+  architectures = ["x86_64"]
+  memory_size   = 128
+  timeout       = 30
+
+  s3_bucket = var.webhook_lambda_s3_bucket
+  s3_key    = var.lifecycle_lambda_s3_key
+
+  role = aws_iam_role.lifecycle_lambda.arn
+
+  environment {
+    variables = {
+      GITHUB_APP_ID                     = var.github_app_id
+      GITHUB_INSTALLATION_ID            = var.github_installation_id
+      GITHUB_APP_PRIVATE_KEY_SECRET_ARN = var.private_key_arn
+      PRIVATE_KEY_SECRET_ARN            = var.private_key_arn
+      DYNAMODB_TABLE                    = aws_dynamodb_table.runners.name
+      DYNAMODB_TABLE_NAME               = aws_dynamodb_table.runners.name
+    }
+  }
+
+  tags = {
+    Name = "${var.project_name}-lifecycle"
+  }
+}
+
+resource "aws_cloudwatch_log_group" "lifecycle" {
+  name              = "/aws/lambda/${var.project_name}-lifecycle"
+  retention_in_days = 14
+}
+
+resource "aws_lambda_event_source_mapping" "lifecycle" {
+  event_source_arn                   = aws_sqs_queue.lifecycle.arn
+  function_name                      = aws_lambda_function.lifecycle.arn
+  batch_size                         = 10
+  maximum_batching_window_in_seconds = 1
+}
+
+# --- IAM: Lifecycle Lambda ---
+
+resource "aws_iam_role" "lifecycle_lambda" {
+  name = "${var.project_name}-lifecycle-lambda"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "lifecycle_lambda_basic" {
+  role       = aws_iam_role.lifecycle_lambda.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy" "lifecycle_lambda" {
+  name = "${var.project_name}-lifecycle-lambda"
+  role = aws_iam_role.lifecycle_lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = "${aws_cloudwatch_log_group.lifecycle.arn}:*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:ChangeMessageVisibility",
+        ]
+        Resource = aws_sqs_queue.lifecycle.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:UpdateItem",
+        ]
+        Resource = aws_dynamodb_table.runners.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [var.private_key_arn]
       },
     ]
   })

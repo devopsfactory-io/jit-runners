@@ -18,6 +18,21 @@ output "scaledown_lambda_arn" {
   value       = aws_lambda_function.scaledown.arn
 }
 
+output "lifecycle_function_arn" {
+  description = "ARN of the lifecycle Lambda function"
+  value       = aws_lambda_function.lifecycle.arn
+}
+
+output "lifecycle_queue_url" {
+  description = "SQS queue URL for lifecycle messages (workflow_job in_progress / completed)"
+  value       = aws_sqs_queue.lifecycle.url
+}
+
+output "lifecycle_queue_dlq_url" {
+  description = "SQS DLQ URL for lifecycle messages"
+  value       = aws_sqs_queue.lifecycle_dlq.url
+}
+
 output "dynamodb_table_name" {
   description = "DynamoDB table name for runner state"
   value       = aws_dynamodb_table.runners.name

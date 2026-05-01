@@ -38,6 +38,17 @@ builds:
     goarch:
       - amd64
 
+  - id: lifecycle
+    dir: lambda
+    main: ./cmd/lifecycle
+    binary: bootstrap
+    ldflags:
+      - -s -w
+    goos:
+      - linux
+    goarch:
+      - amd64
+
 archives:
   - id: webhook-zip
     ids:
@@ -66,6 +77,16 @@ archives:
       - zip
     name_template: >-
       scaledown-{{ .Os }}-{{ .Arch }}
+    strip_binary_directory: true
+    wrap_in_directory: false
+
+  - id: lifecycle-zip
+    ids:
+      - lifecycle
+    formats:
+      - zip
+    name_template: >-
+      lifecycle-{{ .Os }}-{{ .Arch }}
     strip_binary_directory: true
     wrap_in_directory: false
 
