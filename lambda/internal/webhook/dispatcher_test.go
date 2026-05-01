@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	internalsqs "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/sqs"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/lifecycle"
-	internalsqs "github.com/devopsfactory-io/jit-runners/lambda/internal/sqs"
 )
 
 // fakeScaleUpPublisher captures the last ScaleUpMessage seen.
@@ -22,7 +22,7 @@ type fakeScaleUpPublisher struct {
 	failErr error
 }
 
-func (f *fakeScaleUpPublisher) Publish(_ context.Context, msg *internalsqs.ScaleUpMessage) error {
+func (f *fakeScaleUpPublisher) PublishScaleUp(_ context.Context, msg *internalsqs.ScaleUpMessage) error {
 	f.calls++
 	f.last = msg
 	return f.failErr

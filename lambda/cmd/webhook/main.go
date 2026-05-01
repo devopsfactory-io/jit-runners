@@ -11,10 +11,10 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	awssqssdk "github.com/aws/aws-sdk-go-v2/service/sqs"
 
+	awssqs "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/sqs"
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
-	sqspub "github.com/devopsfactory-io/jit-runners/lambda/internal/sqs"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/webhook"
 )
 
@@ -31,6 +31,7 @@ func main() {
 	lambda.Start(handler)
 }
 
+// TODO(phase B): replace direct AWS wiring with provider.New(provider.AWS|GCP).
 func handler(ctx context.Context, req events.LambdaFunctionURLRequest) (events.LambdaFunctionURLResponse, error) {
 	if req.RequestContext.HTTP.Method != "POST" {
 		return response(405, "Method Not Allowed"), nil
@@ -72,11 +73,11 @@ func loadConfig(ctx context.Context) (*appconfig.Config, error) {
 // loadHandler builds the webhook.Handler exactly once per Lambda container.
 // Both publishers are wired here:
 //
-//   - scale-up:  SQS_QUEUE_URL          -> internal/sqs.Publisher
-//   - lifecycle: LIFECYCLE_QUEUE_URL    -> internal/sqs.LifecyclePublisher
+//   - scale-up:  SQS_QUEUE_URL          -> aws/sqs.Publisher
+//   - lifecycle: LIFECYCLE_QUEUE_URL    -> aws/sqs.LifecyclePublisher
 //
-// LIFECYCLE_QUEUE_URL is required for the in_progress/completed dispatch path
-// added in Phase C; absent it, lifecycle requests will return 500 from the
+// LIFECYCLE_QUEUE_URL is required for the in_progress/completed dispatch
+// path added in #47; absent it, lifecycle requests will return 500 from the
 // handler. We surface the missing-env case as a config error here so the
 // Lambda fails fast on cold start when misconfigured.
 func loadHandler(ctx context.Context) (*webhook.Handler, error) {
@@ -91,8 +92,8 @@ func loadHandler(ctx context.Context) (*webhook.Handler, error) {
 			handlerErr = err
 			return
 		}
-		client := sqs.NewFromConfig(awsCfg)
-		scaleUpPub := sqspub.NewPublisher(client, cfg.QueueURL)
+		client := awssqssdk.NewFromConfig(awsCfg)
+		scaleUpPub := awssqs.NewPublisher(client, cfg.QueueURL)
 
 		lifecycleURL := os.Getenv("LIFECYCLE_QUEUE_URL")
 		if lifecycleURL == "" {
@@ -100,7 +101,7 @@ func loadHandler(ctx context.Context) (*webhook.Handler, error) {
 			wHandler = webhook.NewHandler(scaleUpPub, nil, []byte(cfg.WebhookSecret))
 			return
 		}
-		lifecyclePub := sqspub.NewLifecyclePublisher(client, lifecycleURL)
+		lifecyclePub := awssqs.NewLifecyclePublisher(client, lifecycleURL)
 		wHandler = webhook.NewHandler(scaleUpPub, lifecyclePub, []byte(cfg.WebhookSecret))
 	})
 	return wHandler, handlerErr

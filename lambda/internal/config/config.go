@@ -1,3 +1,6 @@
+// Package config loads jit-runners Lambda runtime configuration from
+// environment variables and a secrets.Loader. The Loader abstracts the secret
+// store (AWS Secrets Manager today, GCP Secret Manager on the GCP path).
 package config
 
 import (
@@ -8,9 +11,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	awssm "github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+
+	smloader "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/secretsmanager"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/secrets"
 )
 
 // Config holds the Lambda runtime configuration.
@@ -56,23 +61,20 @@ type LabelMapping struct {
 	AMI          string `json:"ami,omitempty"`
 }
 
-// SecretsReader abstracts Secrets Manager for testing.
-type SecretsReader interface {
-	GetSecretValue(ctx context.Context, input *secretsmanager.GetSecretValueInput, opts ...func(*secretsmanager.Options)) (*secretsmanager.GetSecretValueOutput, error)
-}
-
-// Load reads config from environment variables and optionally Secrets Manager.
+// Load reads config from environment variables. If any *_SECRET_ARN env var
+// is set, an AWS Secrets Manager Loader is constructed lazily and used.
 //
 // Required env vars: GITHUB_APP_ID, SQS_QUEUE_URL, DYNAMODB_TABLE_NAME.
 // Secrets: GITHUB_APP_WEBHOOK_SECRET_ARN / GITHUB_APP_WEBHOOK_SECRET,
 //
 //	GITHUB_APP_PRIVATE_KEY_SECRET_ARN / GITHUB_APP_PRIVATE_KEY.
 func Load(ctx context.Context) (*Config, error) {
-	return LoadWithClient(ctx, nil)
+	return LoadWith(ctx, nil)
 }
 
-// LoadWithClient reads config using the provided SecretsReader (nil uses default).
-func LoadWithClient(ctx context.Context, client SecretsReader) (*Config, error) {
+// LoadWith reads config using the provided secrets.Loader. Pass nil to use
+// the default AWS Secrets Manager loader (constructed lazily only if needed).
+func LoadWith(ctx context.Context, loader secrets.Loader) (*Config, error) {
 	cfg := &Config{
 		AppID:              os.Getenv("GITHUB_APP_ID"),
 		QueueURL:           os.Getenv("SQS_QUEUE_URL"),
@@ -109,7 +111,7 @@ func LoadWithClient(ctx context.Context, client SecretsReader) (*Config, error) 
 		}
 	}
 
-	if err := loadSecrets(ctx, cfg, client); err != nil {
+	if err := loadSecrets(ctx, cfg, loader); err != nil {
 		return nil, err
 	}
 
@@ -130,34 +132,35 @@ func validateRequiredEnv(cfg *Config) error {
 	return nil
 }
 
-// loadSecrets loads webhook secret and private key from Secrets Manager or environment.
-func loadSecrets(ctx context.Context, cfg *Config, client SecretsReader) error {
+// loadSecrets loads webhook secret and private key from a secrets.Loader (when
+// any *_SECRET_ARN env var is set) or from plain env vars.
+func loadSecrets(ctx context.Context, cfg *Config, loader secrets.Loader) error {
 	webhookSecretARN := os.Getenv("GITHUB_APP_WEBHOOK_SECRET_ARN")
 	privateKeyARN := os.Getenv("GITHUB_APP_PRIVATE_KEY_SECRET_ARN")
 
 	if webhookSecretARN != "" || privateKeyARN != "" {
-		if client == nil {
+		if loader == nil {
 			awsCfg, err := config.LoadDefaultConfig(ctx)
 			if err != nil {
 				return fmt.Errorf("load AWS config: %w", err)
 			}
-			client = secretsmanager.NewFromConfig(awsCfg)
+			loader = smloader.New(awssm.NewFromConfig(awsCfg))
 		}
 		if webhookSecretARN != "" {
-			secret, err := getSecret(ctx, client, webhookSecretARN)
+			secret, err := loader.Load(ctx, webhookSecretARN)
 			if err != nil {
 				return fmt.Errorf("webhook secret: %w", err)
 			}
-			cfg.WebhookSecret = secret
+			cfg.WebhookSecret = string(secret)
 		} else {
 			cfg.WebhookSecret = os.Getenv("GITHUB_APP_WEBHOOK_SECRET")
 		}
 		if privateKeyARN != "" {
-			secret, err := getSecret(ctx, client, privateKeyARN)
+			secret, err := loader.Load(ctx, privateKeyARN)
 			if err != nil {
 				return fmt.Errorf("private key: %w", err)
 			}
-			cfg.PrivateKey = secret
+			cfg.PrivateKey = string(secret)
 		} else {
 			cfg.PrivateKey = os.Getenv("GITHUB_APP_PRIVATE_KEY")
 		}
@@ -173,17 +176,4 @@ func loadSecrets(ctx context.Context, cfg *Config, client SecretsReader) error {
 		return fmt.Errorf("private key is required (GITHUB_APP_PRIVATE_KEY or GITHUB_APP_PRIVATE_KEY_SECRET_ARN)")
 	}
 	return nil
-}
-
-func getSecret(ctx context.Context, client SecretsReader, arn string) (string, error) {
-	out, err := client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
-		SecretId: aws.String(arn),
-	})
-	if err != nil {
-		return "", err
-	}
-	if out.SecretString != nil {
-		return *out.SecretString, nil
-	}
-	return "", fmt.Errorf("secret %s has no SecretString", arn)
 }

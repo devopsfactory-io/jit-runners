@@ -11,14 +11,15 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	awsec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
-	awssqs "github.com/aws/aws-sdk-go-v2/service/sqs"
+	awsec2sdk "github.com/aws/aws-sdk-go-v2/service/ec2"
+	awssqssdk "github.com/aws/aws-sdk-go-v2/service/sqs"
 
+	awsdynamo "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/dynamo"
+	awsec2 "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/ec2"
+	awssqs "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/sqs"
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
-	"github.com/devopsfactory-io/jit-runners/lambda/internal/ec2"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/runner"
-	"github.com/devopsfactory-io/jit-runners/lambda/internal/sqs"
 )
 
 var (
@@ -31,6 +32,7 @@ func main() {
 	lambda.Start(handler)
 }
 
+// TODO(phase B): replace direct AWS wiring with provider.New(provider.AWS|GCP).
 func handler(ctx context.Context) error {
 	cfg, err := loadConfig(ctx)
 	if err != nil {
@@ -42,9 +44,12 @@ func handler(ctx context.Context) error {
 		return fmt.Errorf("load AWS config: %w", err)
 	}
 
-	store := runner.NewStore(dynamodb.NewFromConfig(awsCfg), cfg.TableName)
-	launcher := ec2.NewLauncher(awsec2.NewFromConfig(awsCfg))
-	publisher := sqs.NewPublisher(awssqs.NewFromConfig(awsCfg), cfg.QueueURL)
+	store := awsdynamo.NewStore(dynamodb.NewFromConfig(awsCfg), cfg.TableName)
+	launcher := awsec2.NewLauncher(awsec2sdk.NewFromConfig(awsCfg), awsec2.LauncherOptions{
+		SecurityGroupID:    cfg.SecurityGroupID,
+		IAMInstanceProfile: cfg.IAMInstanceProfile,
+	})
+	publisher := awssqs.NewPublisher(awssqssdk.NewFromConfig(awsCfg), cfg.QueueURL)
 
 	// Mint a real installation token at sweep start when GITHUB_INSTALLATION_ID
 	// is set so DeregisterRunner calls in terminateAndDeregister actually
