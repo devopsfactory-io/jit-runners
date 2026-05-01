@@ -148,3 +148,30 @@ func (c *Client) GenerateJITConfig(ctx context.Context, ownerRepo string, name s
 	}
 	return &cfg, nil
 }
+
+// DeregisterRunner deletes a self-hosted runner registration on GitHub.
+// Returns nil for both 204 (deleted) and 404 (already gone) so callers can
+// invoke this unconditionally on cleanup paths. A zero runnerID is a no-op.
+func (c *Client) DeregisterRunner(ctx context.Context, ownerRepo string, runnerID int64) error {
+	if runnerID <= 0 {
+		return nil // nothing to deregister
+	}
+	url := fmt.Sprintf("%s/repos/%s/actions/runners/%d", c.baseURL, ownerRepo, runnerID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return fmt.Errorf("github: DeregisterRunner build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: URL from GitHub API constant
+	if err != nil {
+		return fmt.Errorf("github: DeregisterRunner %d: %w", runnerID, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // best-effort close
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	return fmt.Errorf("github: DeregisterRunner %d: status %d", runnerID, resp.StatusCode)
+}
