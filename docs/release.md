@@ -5,8 +5,8 @@ This document captures the manual procedure for releasing a new version of
 Lambda code. It mirrors the steps used for the v0.3.0 release.
 
 > **Scope:** stack `jit-runners` in account `767000629676`, region `us-east-2`,
-> bucket `jit-runners-lambda-s3`, three functions
-> (`jit-runners-{webhook,scaleup,scaledown}`).
+> bucket `jit-runners-lambda-s3`, four functions
+> (`jit-runners-{webhook,scaleup,scaledown,lifecycle}`).
 
 > **Out of scope:** Terraform deployment (see `docs/getting-started-terraform.md`)
 > and the AMI build (see `infra/packer/`).
@@ -28,7 +28,7 @@ aws cloudformation describe-stacks \
   --stack-name jit-runners --region us-east-2 \
   --query 'Stacks[0].StackStatus'           # must be UPDATE_COMPLETE / CREATE_COMPLETE
 
-for fn in jit-runners-webhook jit-runners-scaleup jit-runners-scaledown; do
+for fn in jit-runners-webhook jit-runners-scaleup jit-runners-scaledown jit-runners-lifecycle; do
   aws lambda get-function --function-name "$fn" --region us-east-2 \
     --query 'Configuration.CodeSha256' --output text
 done
@@ -59,12 +59,13 @@ cd /tmp/jit-runners-vX.Y.Z
 mv webhook-linux-amd64.zip   webhook.zip
 mv scaleup-linux-amd64.zip   scaleup.zip
 mv scaledown-linux-amd64.zip scaledown.zip
+mv lifecycle-linux-amd64.zip lifecycle.zip
 ```
 
 ## 4. Upload to S3
 
 ```bash
-for f in webhook scaleup scaledown; do
+for f in webhook scaleup scaledown lifecycle; do
   aws s3 cp "/tmp/jit-runners-vX.Y.Z/${f}.zip" \
     "s3://jit-runners-lambda-s3/vX.Y.Z/${f}.zip"
 done
@@ -81,7 +82,10 @@ aws cloudformation update-stack \
     ParameterKey=WebhookLambdaS3Key,ParameterValue=vX.Y.Z/webhook.zip \
     ParameterKey=ScaleUpLambdaS3Key,ParameterValue=vX.Y.Z/scaleup.zip \
     ParameterKey=ScaleDownLambdaS3Key,ParameterValue=vX.Y.Z/scaledown.zip \
+    ParameterKey=LifecycleLambdaS3Key,ParameterValue=vX.Y.Z/lifecycle.zip \
+    ParameterKey=MaxReEnqueueAttempts,ParameterValue=3 \
     ParameterKey=GitHubAppId,UsePreviousValue=true \
+    ParameterKey=GitHubInstallationId,UsePreviousValue=true \
     ParameterKey=LambdaS3Bucket,UsePreviousValue=true \
     ParameterKey=WebhookSecretArn,UsePreviousValue=true \
     ParameterKey=PrivateKeySecretArn,UsePreviousValue=true \
@@ -105,7 +109,7 @@ named-IAM resources.
 Each Lambda's `CodeSha256` must differ from the pre-flight capture:
 
 ```bash
-for fn in jit-runners-webhook jit-runners-scaleup jit-runners-scaledown; do
+for fn in jit-runners-webhook jit-runners-scaleup jit-runners-scaledown jit-runners-lifecycle; do
   aws lambda get-function --function-name "$fn" --region us-east-2 \
     --query 'Configuration.CodeSha256' --output text
 done
@@ -130,7 +134,10 @@ aws cloudformation update-stack \
     ParameterKey=WebhookLambdaS3Key,ParameterValue=vPREV/webhook.zip \
     ParameterKey=ScaleUpLambdaS3Key,ParameterValue=vPREV/scaleup.zip \
     ParameterKey=ScaleDownLambdaS3Key,ParameterValue=vPREV/scaledown.zip \
+    ParameterKey=LifecycleLambdaS3Key,ParameterValue=vPREV/lifecycle.zip \
+    ParameterKey=MaxReEnqueueAttempts,UsePreviousValue=true \
     ParameterKey=GitHubAppId,UsePreviousValue=true \
+    ParameterKey=GitHubInstallationId,UsePreviousValue=true \
     ParameterKey=LambdaS3Bucket,UsePreviousValue=true \
     ParameterKey=WebhookSecretArn,UsePreviousValue=true \
     ParameterKey=PrivateKeySecretArn,UsePreviousValue=true \
@@ -157,3 +164,7 @@ The previous-version objects must still exist in S3 for rollback to work — do
 - The AMI build pipeline (`ami-build.yml`) auto-triggers on the same tag push
   but is independent — its success or failure does not affect the Lambda
   release. Track AMI build issues separately.
+- The lifecycle Lambda is new in v1.0.0-rc.1+. Releases prior to that do not
+  include `lifecycle.zip` and do not need the `LifecycleLambdaS3Key` or
+  `MaxReEnqueueAttempts` parameters. When rolling back to a pre-v1.0.0-rc.1
+  release, omit those two parameters from the `update-stack` command.
