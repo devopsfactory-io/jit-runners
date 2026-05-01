@@ -1,13 +1,24 @@
 package runner
 
-import "time"
+import (
+	"time"
 
-// Status constants for runner records.
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
+)
+
+// Runner is an alias for state.Runner. The lifecycle work uses
+// state.RunnerStore directly; aliasing here keeps callers that import
+// runner.Runner working without modification (Go type aliases are transparent).
+// New code should prefer state.Runner.
+type Runner = state.Runner
+
+// Status constants are re-exported from the canonical state package so
+// callers that historically used runner.Status* keep compiling.
 const (
-	StatusPending   = "pending"
-	StatusRunning   = "running"
-	StatusCompleted = "completed"
-	StatusFailed    = "failed"
+	StatusPending   = state.StatusPending
+	StatusRunning   = state.StatusRunning
+	StatusCompleted = state.StatusCompleted
+	StatusFailed    = state.StatusFailed
 )
 
 // Record is the DynamoDB state record for an active runner.
