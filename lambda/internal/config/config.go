@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -18,6 +19,15 @@ type Config struct {
 	AppID         string
 	PrivateKey    string //nolint:gosec // G117: not a hardcoded credential, loaded from env/secrets manager
 	WebhookSecret string
+
+	// InstallationID is the GitHub App installation this Lambda authenticates
+	// against when minting installation access tokens at startup (used by the
+	// scaledown Cleaner and lifecycle handler, which operate on records that
+	// do not carry a per-message installation_id). Optional: when zero the
+	// caller falls back to a tokenless GitHub client and DeregisterRunner
+	// calls will 401 in production. Scaleup is unaffected because it derives
+	// the installation from the SQS message payload directly.
+	InstallationID int64
 
 	// SQS queue URL for scale-up messages.
 	QueueURL string
@@ -79,6 +89,17 @@ func LoadWithClient(ctx context.Context, client SecretsReader) (*Config, error) 
 	// Parse subnet IDs (comma-separated).
 	if subnets := os.Getenv("EC2_SUBNET_IDS"); subnets != "" {
 		cfg.SubnetIDs = strings.Split(subnets, ",")
+	}
+
+	// Parse optional GitHub App installation ID. Required for the scaledown
+	// Cleaner and lifecycle handler to mint installation tokens for
+	// DeregisterRunner; ignored by webhook + scaleup.
+	if v := os.Getenv("GITHUB_INSTALLATION_ID"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse GITHUB_INSTALLATION_ID %q: %w", v, err)
+		}
+		cfg.InstallationID = n
 	}
 
 	// Parse label mappings from JSON.

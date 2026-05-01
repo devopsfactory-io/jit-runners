@@ -1,34 +1,107 @@
+// Package main is the lifecycle Lambda entry point. It consumes lifecycle
+// SQS messages (workflow_job in_progress / completed) and applies the
+// state-machine transition + GitHub deregister side-effect.
+//
+// Construction mirrors cmd/scaledown and cmd/scaleup: load AWS config,
+// build a DynamoDB client + *runner.Store, wrap it in StateAdapter to
+// satisfy the cloud-agnostic state.RunnerStore the lifecycle handler
+// consumes, mint an installation token at startup for DeregisterRunner.
+//
+// We intentionally do not introduce a provider.Bundle abstraction here —
+// that lives in the parallel #45 cloud-abstraction line and would be a
+// merge hazard for #47.
 package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
+	"sync"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 
+	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/lifecycle"
-	"github.com/devopsfactory-io/jit-runners/lambda/internal/provider"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/runner"
+)
+
+var (
+	cfgOnce sync.Once
+	appCfg  *appconfig.Config
+	cfgErr  error
 )
 
 func main() {
-	ctx := context.Background()
+	lambda.Start(handler)
+}
 
-	bundle, err := provider.New(ctx, os.Getenv("CLOUD_PROVIDER"))
+func handler(ctx context.Context, ev events.SQSEvent) error {
+	cfg, err := loadConfig(ctx)
 	if err != nil {
-		log.Fatalf("provider.New: %v", err)
+		return fmt.Errorf("load config: %w", err)
 	}
-	defer bundle.Close()
 
-	h := lifecycle.New(bundle.State, bundle.GitHub, log.Default())
+	awsCfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("load AWS config: %w", err)
+	}
 
-	lambda.Start(func(ctx context.Context, ev events.SQSEvent) error {
-		for _, rec := range ev.Records {
-			if err := h.HandleSQS(ctx, []byte(rec.Body)); err != nil {
-				return err
-			}
+	store := runner.NewStore(dynamodb.NewFromConfig(awsCfg), cfg.TableName)
+	adapter := runner.NewStateAdapter(store)
+
+	// Mint a real installation token when GITHUB_INSTALLATION_ID is set.
+	// Without it we fall back to a tokenless client and DeregisterRunner
+	// calls will 401, but the lifecycle DDB transitions still run — the
+	// handler logs and ignores deregister failures by design (DDB commit
+	// is the source of truth; deregister is best-effort cleanup).
+	ghClient, err := newGitHubClient(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("github client: %w", err)
+	}
+
+	h := lifecycle.New(adapter, ghClient, log.Default())
+
+	for _, rec := range ev.Records {
+		if err := h.HandleSQS(ctx, []byte(rec.Body)); err != nil {
+			return err
 		}
-		return nil
+	}
+	return nil
+}
+
+// newGitHubClient builds a *github.Client. When cfg.InstallationID is set
+// the client carries a fresh installation access token (mirrors the
+// scaleup flow). When unset we log a warning and return a tokenless
+// client — production should always set GITHUB_INSTALLATION_ID; the
+// fallback exists so a misconfigured Lambda cold-start does not crash and
+// continues to commit lifecycle transitions to DynamoDB.
+func newGitHubClient(ctx context.Context, cfg *appconfig.Config) (*github.Client, error) {
+	if cfg.InstallationID == 0 {
+		log.Printf("GITHUB_INSTALLATION_ID is unset: DeregisterRunner calls will 401; lifecycle DDB transitions will still run")
+		return github.NewClient(""), nil
+	}
+	token, err := github.InstallationToken(ctx, cfg.AppID, cfg.PrivateKey, cfg.InstallationID)
+	if err != nil {
+		return nil, fmt.Errorf("get installation token: %w", err)
+	}
+	return github.NewClient(token), nil
+}
+
+func loadConfig(ctx context.Context) (*appconfig.Config, error) {
+	cfgOnce.Do(func() {
+		appCfg, cfgErr = appconfig.Load(ctx)
 	})
+	return appCfg, cfgErr
+}
+
+func init() {
+	log.SetFlags(log.Lshortfile)
+	if os.Getenv("AWS_LAMBDA_FUNCTION_NAME") != "" {
+		log.SetOutput(os.Stdout)
+	}
 }

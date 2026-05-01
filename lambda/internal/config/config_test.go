@@ -101,6 +101,44 @@ func TestLoad_Success(t *testing.T) {
 	if len(cfg.LabelMappings) != 1 || cfg.LabelMappings[0].Label != "gpu" {
 		t.Errorf("LabelMappings = %v", cfg.LabelMappings)
 	}
+	if cfg.InstallationID != 0 {
+		t.Errorf("InstallationID = %d, want 0 (unset)", cfg.InstallationID)
+	}
+}
+
+func TestLoad_InstallationID(t *testing.T) {
+	t.Run("valid", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("GITHUB_APP_ID", "12345")
+		t.Setenv("SQS_QUEUE_URL", "https://sqs.us-east-1.amazonaws.com/123/queue")
+		t.Setenv("DYNAMODB_TABLE_NAME", "runners")
+		t.Setenv("GITHUB_APP_WEBHOOK_SECRET", "my-secret")
+		t.Setenv("GITHUB_APP_PRIVATE_KEY", "my-private-key")
+		t.Setenv("GITHUB_INSTALLATION_ID", "987654")
+
+		cfg, err := Load(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.InstallationID != 987654 {
+			t.Errorf("InstallationID = %d, want 987654", cfg.InstallationID)
+		}
+	})
+
+	t.Run("invalid", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("GITHUB_APP_ID", "12345")
+		t.Setenv("SQS_QUEUE_URL", "https://sqs.us-east-1.amazonaws.com/123/queue")
+		t.Setenv("DYNAMODB_TABLE_NAME", "runners")
+		t.Setenv("GITHUB_APP_WEBHOOK_SECRET", "my-secret")
+		t.Setenv("GITHUB_APP_PRIVATE_KEY", "my-private-key")
+		t.Setenv("GITHUB_INSTALLATION_ID", "not-a-number")
+
+		_, err := Load(context.Background())
+		if err == nil {
+			t.Fatal("expected parse error, got nil")
+		}
+	})
 }
 
 func clearEnv(t *testing.T) {
@@ -109,6 +147,7 @@ func clearEnv(t *testing.T) {
 		"GITHUB_APP_ID", "SQS_QUEUE_URL", "DYNAMODB_TABLE_NAME",
 		"GITHUB_APP_WEBHOOK_SECRET", "GITHUB_APP_WEBHOOK_SECRET_ARN",
 		"GITHUB_APP_PRIVATE_KEY", "GITHUB_APP_PRIVATE_KEY_SECRET_ARN",
+		"GITHUB_INSTALLATION_ID",
 		"EC2_SUBNET_IDS", "EC2_SECURITY_GROUP_ID", "EC2_IAM_INSTANCE_PROFILE",
 		"EC2_DEFAULT_AMI", "LABEL_MAPPINGS",
 	}
