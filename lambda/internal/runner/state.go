@@ -69,7 +69,7 @@ func (s *Store) Get(ctx context.Context, repository string, jobID int64) (*Recor
 		return nil, fmt.Errorf("get runner record: %w", err)
 	}
 	if out.Item == nil {
-		return nil, nil
+		return nil, state.ErrNotFound
 	}
 	var record Record
 	if err := attributevalue.UnmarshalMap(out.Item, &record); err != nil {

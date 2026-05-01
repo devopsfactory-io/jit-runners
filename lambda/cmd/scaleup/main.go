@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/runner"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/sqs"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/webhook"
 )
 
@@ -65,7 +67,7 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, launcher *ec2.Lau
 
 	// Idempotency check.
 	existing, err := store.Get(ctx, msg.RepositoryFull, msg.JobID)
-	if err != nil {
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
 		return fmt.Errorf("check existing runner: %w", err)
 	}
 	if existing != nil {

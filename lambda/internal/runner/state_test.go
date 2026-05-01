@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -217,6 +218,21 @@ func TestStore_PutGet_LegacyRecordWithoutNewFields(t *testing.T) {
 	}
 	if _, present := item["last_attempt_at"]; present {
 		t.Error("last_attempt_at should be omitted when zero")
+	}
+}
+
+func TestStore_Get_NotFoundReturnsStateErrNotFound(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeDDBClient{}
+	s := NewStore(fake, "t")
+
+	got, err := s.Get(context.Background(), "owner/repo", 999)
+	if got != nil {
+		t.Errorf("expected nil record, got %+v", got)
+	}
+	if !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("expected state.ErrNotFound, got %v", err)
 	}
 }
 
