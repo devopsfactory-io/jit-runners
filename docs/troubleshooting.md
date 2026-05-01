@@ -466,3 +466,64 @@ gh workflow run ami-build.yml -f distribute=true
 - Update the AMI parameter promptly after each AMI build.
 - Use the `ami-build.yml` workflow which prints the new AMI ID in the job summary.
 - Consider automating the AMI parameter update as part of the build pipeline.
+
+---
+
+## 7. Re-enqueue and DLQ inspection
+
+### Symptom: jobs stuck in GitHub's queued state for > StaleThresholdMinutes
+
+The lifecycle handler updates DynamoDB on `in_progress` and `completed` events. If GitHub's
+scheduler hiccups and never delivers an `in_progress` event for a queued job,
+scaledown reaps the stale-pending record after `StaleThresholdMinutes` (default
+10), terminates the orphaned spot instance, deregisters the GitHub runner
+registration, and re-publishes the original `ScaleUpMessage` with
+`re_enqueue_attempts` incremented. After `MaxReEnqueueAttempts` (default 3), the
+message is left as terminal `failed` and an ERROR log line is emitted.
+
+### Inspection commands
+
+```bash
+# Lifecycle queue depth
+aws sqs get-queue-attributes \
+  --queue-url $(aws cloudformation describe-stack-resources \
+    --stack-name jit-runners --region us-east-2 \
+    --query 'StackResources[?LogicalResourceId==`LifecycleQueue`].PhysicalResourceId | [0]' \
+    --output text) \
+  --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible \
+  --region us-east-2
+
+# Lifecycle DLQ contents
+aws sqs receive-message \
+  --queue-url $(aws cloudformation describe-stack-resources \
+    --stack-name jit-runners --region us-east-2 \
+    --query 'StackResources[?LogicalResourceId==`LifecycleQueueDLQ`].PhysicalResourceId | [0]' \
+    --output text) \
+  --max-number-of-messages 10 \
+  --region us-east-2
+
+# Recent re-enqueue exhaustion log lines
+aws logs filter-log-events \
+  --log-group-name /aws/lambda/jit-runners-scaledown \
+  --filter-pattern '"re-enqueue exhausted"' \
+  --region us-east-2 --max-items 20
+```
+
+### Manual reset procedure
+
+If a job is in DynamoDB with `Status=failed` after re-enqueue exhaustion AND the
+GitHub job is still `queued`, you can manually re-enqueue by sending a fresh
+`ScaleUpMessage` with `re_enqueue_attempts` reset to 0:
+
+```bash
+aws sqs send-message \
+  --queue-url $(aws cloudformation describe-stack-resources \
+    --stack-name jit-runners --region us-east-2 \
+    --query 'StackResources[?LogicalResourceId==`ScaleUpQueue`].PhysicalResourceId | [0]' \
+    --output text) \
+  --message-body '{"job_id":<JOB_ID>,"repo":"owner/repo","labels":["self-hosted","large"],"re_enqueue_attempts":0}' \
+  --region us-east-2
+```
+
+The scaleup function's idempotency guard (`Status == StatusRunning` → skip)
+ensures this is safe even if the original runner did register.
