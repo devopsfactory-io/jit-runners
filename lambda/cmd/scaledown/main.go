@@ -46,12 +46,19 @@ func handler(ctx context.Context) error {
 	launcher := ec2.NewLauncher(awsec2.NewFromConfig(awsCfg))
 	publisher := sqs.NewPublisher(awssqs.NewFromConfig(awsCfg), cfg.QueueURL)
 
-	// Phase E uses a tokenless GitHub client. DeregisterRunner is a no-op
-	// when the record's GitHubRunnerID is zero; non-zero IDs will fail with
-	// 401 and the cleanup path tolerates that (logged, not returned). Phase
-	// F will wire a real installation token resolver once runner records
-	// carry the InstallationID.
-	ghClient := github.NewClient("")
+	// Mint a real installation token at sweep start when GITHUB_INSTALLATION_ID
+	// is set so DeregisterRunner calls in terminateAndDeregister actually
+	// succeed. The Cleaner does not loop tokens per-record because (a) the
+	// token has a 60-min validity which is far longer than any sweep, and
+	// (b) DDB records do not carry a per-row installation_id (scaleup
+	// derives it from the SQS message; persistence is a Phase G concern).
+	// When InstallationID is unset we fall back to a tokenless client; the
+	// cleanup path already logs-and-continues on deregister failure so the
+	// sweep still terminates EC2 instances and updates DDB.
+	ghClient, err := newGitHubClient(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("github client: %w", err)
+	}
 
 	staleMinutes := envInt("STALE_THRESHOLD_MINUTES", 10)
 	maxAgeMinutes := envInt("MAX_RUNNER_AGE_MINUTES", 360)
@@ -74,6 +81,22 @@ func loadConfig(ctx context.Context) (*appconfig.Config, error) {
 		appCfg, cfgErr = appconfig.Load(ctx)
 	})
 	return appCfg, cfgErr
+}
+
+// newGitHubClient builds a *github.Client carrying a fresh installation
+// access token when cfg.InstallationID is set. When unset it returns a
+// tokenless client and logs a warning — DeregisterRunner will then 401,
+// but the cleanup path tolerates that (logs and continues).
+func newGitHubClient(ctx context.Context, cfg *appconfig.Config) (*github.Client, error) {
+	if cfg.InstallationID == 0 {
+		log.Printf("GITHUB_INSTALLATION_ID is unset: DeregisterRunner calls will 401; cleanup will still terminate EC2 + update DDB")
+		return github.NewClient(""), nil
+	}
+	token, err := github.InstallationToken(ctx, cfg.AppID, cfg.PrivateKey, cfg.InstallationID)
+	if err != nil {
+		return nil, fmt.Errorf("get installation token: %w", err)
+	}
+	return github.NewClient(token), nil
 }
 
 func envInt(key string, defaultVal int) int {
