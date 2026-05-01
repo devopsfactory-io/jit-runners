@@ -2,137 +2,252 @@ package runner
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"time"
+
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/sqs"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
 )
 
-// EC2Terminator abstracts EC2 instance termination for testing.
+// EC2Terminator abstracts EC2 instance termination for the cleanup path.
+// It is satisfied by *ec2.Launcher.
 type EC2Terminator interface {
 	Terminate(ctx context.Context, instanceIDs ...string) error
-	ListManagedInstances(ctx context.Context) ([]string, error)
 }
 
-// Cleaner handles stale and orphaned runner cleanup.
+// ghClient is the narrow surface of the GitHub client used by Cleaner.
+// Defined locally so unit tests can fake it without importing the real
+// github package. Satisfied by *github.Client.
+type ghClient interface {
+	DeregisterRunner(ctx context.Context, ownerRepo string, runnerID int64) error
+}
+
+// scaleupPublisher is the narrow surface of the SQS publisher used by
+// Cleaner to re-enqueue stale-pending records. Satisfied by *sqs.Publisher.
+type scaleupPublisher interface {
+	Publish(ctx context.Context, msg *sqs.ScaleUpMessage) error
+}
+
+// Cleaner reaps stale runner records and (for stale-pending) re-enqueues a
+// fresh launch attempt with an attempt counter. Stale-running records are
+// terminated but NEVER re-enqueued — re-enqueueing a running record can
+// double-launch when GitHub may already consider the job done.
 type Cleaner struct {
-	store                 *Store
-	ec2                   EC2Terminator
-	staleThresholdMinutes int
-	maxAgeMinutes         int
+	Store            *Store
+	Launcher         EC2Terminator
+	GitHub           ghClient
+	ScaleUpPublisher scaleupPublisher
+
+	// StaleAfter is the threshold applied to status=pending records.
+	// A pending record older than now-StaleAfter is considered stuck.
+	StaleAfter time.Duration
+	// MaxAge is the threshold applied to status=running records. A running
+	// record older than now-MaxAge is reaped (terminated + marked failed).
+	MaxAge time.Duration
+	// MaxReEnqueueAttempts is the budget for stale-pending re-enqueues.
+	// When ReEnqueueAttempts has reached this value the record is marked
+	// terminal failed and an ERROR is logged instead of re-publishing.
+	MaxReEnqueueAttempts int
+
+	// Now is injectable for tests; defaults to time.Now if unset.
+	Now func() time.Time
 }
 
-// NewCleaner creates a Cleaner with the given thresholds.
-func NewCleaner(store *Store, ec2 EC2Terminator, staleMinutes, maxAgeMinutes int) *Cleaner {
+// NewCleaner builds a Cleaner. staleMinutes and maxAgeMinutes apply to
+// pending and running records respectively; maxReEnqueueAttempts caps the
+// number of times a stale-pending record may be re-published.
+func NewCleaner(
+	store *Store,
+	launcher EC2Terminator,
+	gh ghClient,
+	pub scaleupPublisher,
+	staleMinutes, maxAgeMinutes, maxReEnqueueAttempts int,
+) *Cleaner {
 	if staleMinutes <= 0 {
 		staleMinutes = 10
 	}
 	if maxAgeMinutes <= 0 {
 		maxAgeMinutes = 360 // 6 hours
 	}
+	if maxReEnqueueAttempts < 0 {
+		maxReEnqueueAttempts = 0
+	}
 	return &Cleaner{
-		store:                 store,
-		ec2:                   ec2,
-		staleThresholdMinutes: staleMinutes,
-		maxAgeMinutes:         maxAgeMinutes,
+		Store:                store,
+		Launcher:             launcher,
+		GitHub:               gh,
+		ScaleUpPublisher:     pub,
+		StaleAfter:           time.Duration(staleMinutes) * time.Minute,
+		MaxAge:               time.Duration(maxAgeMinutes) * time.Minute,
+		MaxReEnqueueAttempts: maxReEnqueueAttempts,
+		Now:                  time.Now,
 	}
 }
 
-// CleanupResult summarizes the cleanup operation.
+// CleanupResult summarizes a cleanup pass.
+//
+// Stale counts records that were terminated (pending or running). Orphans
+// counts records that were processed by the stale-pending path (re-enqueued
+// or terminally failed because the budget was exhausted). Errors counts any
+// path where termination or publish failed and we abandoned the record.
 type CleanupResult struct {
-	StaleTerminated  int
-	OrphanTerminated int
-	Errors           int
+	Stale   int
+	Orphans int
+	Errors  int
 }
 
 // Run executes the cleanup logic:
-// 1. Terminate pending instances older than staleThreshold.
-// 2. Terminate running instances older than maxAge.
-// 3. Reconcile EC2 instances vs DynamoDB records for orphans.
+//  1. Stale-pending sweep — terminate, deregister, re-enqueue if budget
+//     remains, otherwise mark terminal failed.
+//  2. Stale-running sweep — terminate, deregister, mark failed. NEVER
+//     re-enqueue a running record.
 func (c *Cleaner) Run(ctx context.Context) (*CleanupResult, error) {
 	result := &CleanupResult{}
-	now := time.Now().Unix()
+	now := c.now()
 
-	// 1. Clean up stale "pending" instances.
-	pending, err := c.store.ListByStatus(ctx, StatusPending)
+	pending, err := c.Store.ListByStatus(ctx, StatusPending)
 	if err != nil {
 		return result, err
 	}
-	staleThreshold := now - int64(c.staleThresholdMinutes*60)
-	if err := c.cleanupStaleInstances(ctx, pending, staleThreshold, "pending", result); err != nil {
-		return result, err
-	}
+	staleCutoff := now.Add(-c.StaleAfter).Unix()
+	c.sweepStalePending(ctx, pending, staleCutoff, now, result)
 
-	// 2. Clean up stuck "running" instances.
-	running, err := c.store.ListByStatus(ctx, StatusRunning)
+	running, err := c.Store.ListByStatus(ctx, StatusRunning)
 	if err != nil {
 		return result, err
 	}
-	maxAgeThreshold := now - int64(c.maxAgeMinutes*60)
-	if err := c.cleanupStaleInstances(ctx, running, maxAgeThreshold, "running", result); err != nil {
-		return result, err
-	}
-
-	// 3. Detect orphaned EC2 instances (tagged but not in DynamoDB).
-	allRecords := append(pending, running...)
-	completed, err := c.store.ListByStatus(ctx, StatusCompleted)
-	if err != nil {
-		return result, fmt.Errorf("list completed runners: %w", err)
-	}
-	failed, err := c.store.ListByStatus(ctx, StatusFailed)
-	if err != nil {
-		return result, fmt.Errorf("list failed runners: %w", err)
-	}
-	allRecords = append(allRecords, completed...)
-	allRecords = append(allRecords, failed...)
-
-	if err := c.reconcileOrphanInstances(ctx, allRecords, result); err != nil {
-		return result, err
-	}
+	runCutoff := now.Add(-c.MaxAge).Unix()
+	c.sweepStaleRunning(ctx, running, runCutoff, now, result)
 
 	return result, nil
 }
 
-// cleanupStaleInstances terminates instances that have been in the given status longer than the threshold.
-func (c *Cleaner) cleanupStaleInstances(ctx context.Context, records []*Record, threshold int64, statusLabel string, result *CleanupResult) error {
+// sweepStalePending handles status=pending records older than the cutoff:
+// terminate the EC2 instance (if any), deregister the GitHub runner (if
+// any), and either re-enqueue a fresh launch attempt or mark the record
+// terminal failed when the attempt budget is exhausted.
+func (c *Cleaner) sweepStalePending(ctx context.Context, records []*Record, cutoff int64, now time.Time, result *CleanupResult) {
 	for _, r := range records {
-		if r.CreatedAt < threshold {
-			log.Printf("cleanup: terminating stale %s runner %s (instance %s)", statusLabel, r.RunnerID, r.InstanceID)
-			if err := c.ec2.Terminate(ctx, r.InstanceID); err != nil {
-				log.Printf("cleanup: failed to terminate %s: %v", r.InstanceID, err)
+		if r.CreatedAt >= cutoff {
+			continue
+		}
+		log.Printf("cleanup: terminating stale pending runner %s (instance %s, attempts=%d)",
+			r.RunnerID, r.InstanceID, r.ReEnqueueAttempts)
+
+		if err := c.terminateAndDeregister(ctx, r); err != nil {
+			result.Errors++
+			continue
+		}
+		result.Stale++
+
+		if r.ReEnqueueAttempts < c.MaxReEnqueueAttempts {
+			next := r.ReEnqueueAttempts + 1
+			msg := &sqs.ScaleUpMessage{
+				EventAction:       "queued",
+				JobID:             r.JobID,
+				RunID:             r.RunID,
+				RepositoryFull:    r.Repository,
+				Labels:            r.Labels,
+				ReEnqueueAttempts: next,
+			}
+			if err := c.ScaleUpPublisher.Publish(ctx, msg); err != nil {
+				log.Printf("cleanup: re-enqueue publish failed for %s: %v", r.RunnerID, err)
 				result.Errors++
 				continue
 			}
-			if err := c.store.UpdateStatus(ctx, r.Repository, r.JobID, StatusFailed); err != nil {
-				log.Printf("cleanup: failed to update status for %s: %v", r.RunnerID, err)
+			failed := StatusFailed
+			at := now
+			attempts := next
+			if err := c.Store.Update(ctx, r.RunnerID, state.RunnerUpdate{
+				Status:            &failed,
+				ReEnqueueAttempts: &attempts,
+				LastAttemptAt:     &at,
+			}); err != nil {
+				log.Printf("cleanup: update after re-enqueue failed for %s: %v", r.RunnerID, err)
 				result.Errors++
 				continue
 			}
-			result.StaleTerminated++
+			result.Orphans++
+			continue
+		}
+
+		// Budget exhausted — mark terminal failed and log loudly. Do NOT
+		// re-enqueue: the message has been retried MaxReEnqueueAttempts
+		// times already and continued failure indicates a systemic issue
+		// that retries cannot resolve.
+		log.Printf("ERROR scaledown: re-enqueue exhausted for %s job=%d after %d attempts",
+			r.Repository, r.JobID, r.ReEnqueueAttempts)
+		failed := StatusFailed
+		at := now
+		if err := c.Store.Update(ctx, r.RunnerID, state.RunnerUpdate{
+			Status:        &failed,
+			LastAttemptAt: &at,
+		}); err != nil {
+			log.Printf("cleanup: update terminal failed for %s: %v", r.RunnerID, err)
+			result.Errors++
+			continue
+		}
+		result.Orphans++
+	}
+}
+
+// sweepStaleRunning handles status=running records older than the cutoff:
+// terminate the EC2 instance, deregister the GitHub runner, mark the record
+// failed. NEVER re-enqueue — a running record may correspond to a job that
+// GitHub already considers complete; re-enqueueing would risk a double
+// launch.
+func (c *Cleaner) sweepStaleRunning(ctx context.Context, records []*Record, cutoff int64, now time.Time, result *CleanupResult) {
+	for _, r := range records {
+		if r.CreatedAt >= cutoff {
+			continue
+		}
+		log.Printf("cleanup: reaping stale running runner %s (instance %s)", r.RunnerID, r.InstanceID)
+
+		if err := c.terminateAndDeregister(ctx, r); err != nil {
+			result.Errors++
+			continue
+		}
+		failed := StatusFailed
+		at := now
+		if err := c.Store.Update(ctx, r.RunnerID, state.RunnerUpdate{
+			Status:        &failed,
+			LastAttemptAt: &at,
+		}); err != nil {
+			log.Printf("cleanup: update failed for stale running %s: %v", r.RunnerID, err)
+			result.Errors++
+			continue
+		}
+		result.Stale++
+	}
+}
+
+// terminateAndDeregister performs the two outbound side-effects shared by
+// both sweep paths: kill the EC2 instance (if any) and deregister the
+// GitHub runner registration (if any). The deregister call returns nil for
+// 404 already, so non-404 errors are logged but do not block downstream
+// state updates — failing the cleanup pass entirely on a transient GitHub
+// outage would leave records stuck. Returns an error only on EC2
+// termination failure, which is the one case we cannot safely proceed
+// past (the instance may still be running).
+func (c *Cleaner) terminateAndDeregister(ctx context.Context, r *Record) error {
+	if r.InstanceID != "" {
+		if err := c.Launcher.Terminate(ctx, r.InstanceID); err != nil {
+			log.Printf("cleanup: terminate %s failed: %v", r.InstanceID, err)
+			return err
+		}
+	}
+	if r.GitHubRunnerID > 0 {
+		if err := c.GitHub.DeregisterRunner(ctx, r.Repository, r.GitHubRunnerID); err != nil {
+			log.Printf("cleanup: deregister runner %d for %s failed: %v",
+				r.GitHubRunnerID, r.Repository, err)
 		}
 	}
 	return nil
 }
 
-// reconcileOrphanInstances finds EC2 instances not tracked in DynamoDB and terminates them.
-func (c *Cleaner) reconcileOrphanInstances(ctx context.Context, knownRecords []*Record, result *CleanupResult) error {
-	managedIDs, err := c.ec2.ListManagedInstances(ctx)
-	if err != nil {
-		return err
+func (c *Cleaner) now() time.Time {
+	if c.Now != nil {
+		return c.Now()
 	}
-	knownIDs := make(map[string]bool)
-	for _, r := range knownRecords {
-		knownIDs[r.InstanceID] = true
-	}
-	for _, id := range managedIDs {
-		if !knownIDs[id] {
-			log.Printf("cleanup: terminating orphaned instance %s", id)
-			if err := c.ec2.Terminate(ctx, id); err != nil {
-				log.Printf("cleanup: failed to terminate orphan %s: %v", id, err)
-				result.Errors++
-				continue
-			}
-			result.OrphanTerminated++
-		}
-	}
-	return nil
+	return time.Now()
 }
