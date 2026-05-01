@@ -42,7 +42,7 @@ func Parse(body []byte) (*ParseResult, error) {
 	}
 
 	// The job must request self-hosted runners.
-	if !hasSelfHostedLabel(event.WorkflowJob.Labels) {
+	if !HasSelfHostedLabel(event.WorkflowJob.Labels) {
 		return result, nil
 	}
 
@@ -53,16 +53,6 @@ func Parse(body []byte) (*ParseResult, error) {
 
 	result.ShouldScale = true
 	return result, nil
-}
-
-// hasSelfHostedLabel checks if the labels include "self-hosted".
-func hasSelfHostedLabel(labels []string) bool {
-	for _, l := range labels {
-		if strings.EqualFold(l, "self-hosted") {
-			return true
-		}
-	}
-	return false
 }
 
 // CustomLabels returns the job's labels excluding standard GitHub labels

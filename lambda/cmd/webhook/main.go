@@ -14,15 +14,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
-	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
 	sqspub "github.com/devopsfactory-io/jit-runners/lambda/internal/sqs"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/webhook"
 )
 
 var (
-	cfgOnce sync.Once
-	appCfg  *appconfig.Config
-	cfgErr  error
+	cfgOnce     sync.Once
+	appCfg      *appconfig.Config
+	cfgErr      error
+	handlerOnce sync.Once
+	wHandler    *webhook.Handler
+	handlerErr  error
 )
 
 func main() {
@@ -47,55 +49,17 @@ func handler(ctx context.Context, req events.LambdaFunctionURLRequest) (events.L
 	sig := getHeader(req.Headers, "x-hub-signature-256")
 	eventType := getHeader(req.Headers, "x-github-event")
 
-	cfg, err := loadConfig(ctx)
+	h, err := loadHandler(ctx)
 	if err != nil {
-		log.Printf("load config: %v", err)
+		log.Printf("init handler: %v", err)
 		return response(500, "Configuration error"), nil
 	}
 
-	if err := github.VerifyWebhookSignature([]byte(body), sig, cfg.WebhookSecret); err != nil {
-		log.Printf("verify signature: %v", err)
-		return response(401, "Invalid signature"), nil
+	resp := h.Handle(ctx, eventType, sig, []byte(body))
+	if resp.Status >= 500 {
+		log.Printf("handle webhook: %s", resp.String())
 	}
-
-	if eventType != "workflow_job" {
-		return response(200, "OK"), nil
-	}
-
-	result, err := webhook.Parse([]byte(body))
-	if err != nil {
-		log.Printf("parse workflow_job: %v", err)
-		return response(400, "Bad payload"), nil
-	}
-
-	if !result.ShouldScale {
-		log.Printf("workflow_job %s action=%s: no scaling needed", result.Event.Repository.FullName, result.Action)
-		return response(200, "OK"), nil
-	}
-
-	// Publish scale-up message to SQS.
-	awsCfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		log.Printf("load AWS config: %v", err)
-		return response(500, "AWS config error"), nil
-	}
-	publisher := sqspub.NewPublisher(sqs.NewFromConfig(awsCfg), cfg.QueueURL)
-
-	msg := &sqspub.ScaleUpMessage{
-		EventAction:    result.Action,
-		JobID:          result.Event.WorkflowJob.ID,
-		RunID:          result.Event.WorkflowJob.RunID,
-		RepositoryFull: result.Event.Repository.FullName,
-		Labels:         result.Event.WorkflowJob.Labels,
-		InstallationID: result.Event.Installation.ID,
-	}
-	if err := publisher.Publish(ctx, msg); err != nil {
-		log.Printf("publish SQS message: %v", err)
-		return response(500, "Queue error"), nil
-	}
-
-	log.Printf("queued scale-up for %s job=%d", msg.RepositoryFull, msg.JobID)
-	return response(200, "OK"), nil
+	return response(resp.Status, resp.Body), nil
 }
 
 func loadConfig(ctx context.Context) (*appconfig.Config, error) {
@@ -103,6 +67,43 @@ func loadConfig(ctx context.Context) (*appconfig.Config, error) {
 		appCfg, cfgErr = appconfig.Load(ctx)
 	})
 	return appCfg, cfgErr
+}
+
+// loadHandler builds the webhook.Handler exactly once per Lambda container.
+// Both publishers are wired here:
+//
+//   - scale-up:  SQS_QUEUE_URL          -> internal/sqs.Publisher
+//   - lifecycle: LIFECYCLE_QUEUE_URL    -> internal/sqs.LifecyclePublisher
+//
+// LIFECYCLE_QUEUE_URL is required for the in_progress/completed dispatch path
+// added in Phase C; absent it, lifecycle requests will return 500 from the
+// handler. We surface the missing-env case as a config error here so the
+// Lambda fails fast on cold start when misconfigured.
+func loadHandler(ctx context.Context) (*webhook.Handler, error) {
+	handlerOnce.Do(func() {
+		cfg, err := loadConfig(ctx)
+		if err != nil {
+			handlerErr = err
+			return
+		}
+		awsCfg, err := config.LoadDefaultConfig(ctx)
+		if err != nil {
+			handlerErr = err
+			return
+		}
+		client := sqs.NewFromConfig(awsCfg)
+		scaleUpPub := sqspub.NewPublisher(client, cfg.QueueURL)
+
+		lifecycleURL := os.Getenv("LIFECYCLE_QUEUE_URL")
+		if lifecycleURL == "" {
+			log.Printf("LIFECYCLE_QUEUE_URL is empty: lifecycle events will return 500 until set")
+			wHandler = webhook.NewHandler(scaleUpPub, nil, []byte(cfg.WebhookSecret))
+			return
+		}
+		lifecyclePub := sqspub.NewLifecyclePublisher(client, lifecycleURL)
+		wHandler = webhook.NewHandler(scaleUpPub, lifecyclePub, []byte(cfg.WebhookSecret))
+	})
+	return wHandler, handlerErr
 }
 
 func response(status int, body string) events.LambdaFunctionURLResponse {
