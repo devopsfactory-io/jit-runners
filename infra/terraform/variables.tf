@@ -17,6 +17,11 @@ variable "github_app_id" {
   type        = string
 }
 
+variable "github_installation_id" {
+  description = "GitHub App installation ID (numeric) used by lifecycle and scaledown for installation-token minting"
+  type        = string
+}
+
 variable "webhook_secret_arn" {
   description = "ARN of the Secrets Manager secret containing the GitHub webhook secret"
   type        = string
@@ -80,6 +85,11 @@ variable "scaledown_lambda_s3_key" {
   type        = string
 }
 
+variable "lifecycle_lambda_s3_key" {
+  description = "S3 key for the lifecycle Lambda zip"
+  type        = string
+}
+
 # --- Scale-down ---
 
 variable "stale_threshold_minutes" {
@@ -92,4 +102,10 @@ variable "max_runner_age_minutes" {
   description = "Maximum age in minutes before a running instance is force-terminated"
   type        = number
   default     = 360
+}
+
+variable "max_re_enqueue_attempts" {
+  description = "Max re-enqueue attempts before a stuck pending job goes terminal"
+  type        = number
+  default     = 3
 }
