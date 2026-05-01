@@ -58,7 +58,15 @@ func (s *Store) Put(ctx context.Context, record *Record) error {
 
 // Get retrieves a runner record by repository and job ID.
 func (s *Store) Get(ctx context.Context, repository string, jobID int64) (*Record, error) {
-	id := runnerID(repository, jobID)
+	return s.GetByID(ctx, runnerID(repository, jobID))
+}
+
+// GetByID retrieves a runner record by its composite primary key
+// ("<repository>#<jobID>"). It is the single-argument variant used by
+// adapters (e.g. StateAdapter) that hold a key produced elsewhere in the
+// pipeline (the lifecycle handler does this) without needing to split it
+// back into its components.
+func (s *Store) GetByID(ctx context.Context, id string) (*Record, error) {
 	out, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(s.tableName),
 		Key: map[string]types.AttributeValue{
