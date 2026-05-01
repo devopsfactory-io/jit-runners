@@ -120,6 +120,9 @@ func (s *Store) Update(ctx context.Context, id string, u state.RunnerUpdate) err
 	if u.Status != nil {
 		add("status", "s", &types.AttributeValueMemberS{Value: *u.Status})
 	}
+	if u.InstanceID != nil {
+		add("instance_id", "i", &types.AttributeValueMemberS{Value: *u.InstanceID})
+	}
 	if u.GitHubRunnerID != nil {
 		add("gh_runner_id", "g", &types.AttributeValueMemberN{Value: strconv.FormatInt(*u.GitHubRunnerID, 10)})
 	}

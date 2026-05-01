@@ -95,9 +95,20 @@ func installationTokenWithBase(ctx context.Context, appID, privateKeyPEM string,
 }
 
 // JITRunnerConfig holds the response from the JIT runner config generation API.
+// The shape mirrors the GitHub REST response:
+//
+//	{ "runner": { "id": 99, "name": "..." }, "encoded_jit_config": "..." }
 type JITRunnerConfig struct {
-	RunnerID   int64  `json:"runner_id"`
-	EncodedJIT string `json:"encoded_jit_config"`
+	Runner     JITRunner `json:"runner"`
+	EncodedJIT string    `json:"encoded_jit_config"`
+}
+
+// JITRunner is the nested runner identity returned alongside the encoded JIT
+// config. The ID is required to deregister the runner from GitHub if scaleup
+// later fails to launch the EC2 instance, or for end-of-job cleanup.
+type JITRunner struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
 }
 
 // GenerateJITConfig requests a just-in-time runner configuration from GitHub.

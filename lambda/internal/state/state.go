@@ -43,6 +43,7 @@ type Filter struct {
 // RunnerUpdate carries pointer-typed fields for partial updates. nil = leave unchanged.
 type RunnerUpdate struct {
 	Status            *string
+	InstanceID        *string
 	GitHubRunnerID    *int64
 	ReEnqueueAttempts *int
 	LastAttemptAt     *time.Time
