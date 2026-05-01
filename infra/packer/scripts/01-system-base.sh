@@ -13,12 +13,16 @@ sudo dnf install -y libicu lttng-ust openssl-libs krb5-libs zlib
 # Swap it out so we get full curl (needed by many GitHub Actions).
 sudo dnf swap -y curl-minimal curl --allowerasing
 
+# AL2023 also ships gnupg2-minimal which conflicts with the full gnupg2 package.
+# Swap it out so we get full gnupg2 (needed for key/signature workflows).
+sudo dnf swap -y gnupg2-minimal gnupg2 --allowerasing
+
 # Core utilities
 sudo dnf install -y \
   git make tar gzip unzip zip bzip2 xz zstd lz4 \
   wget rsync tree findutils which diffutils patch \
   procps-ng sudo shadow-utils \
-  openssl gnupg2 openssh-clients
+  openssl openssh-clients
 
 # Build tools (gcc, g++, autoconf, automake, etc.)
 echo "=== jit-runners: installing development tools ==="
