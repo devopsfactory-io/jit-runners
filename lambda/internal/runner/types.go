@@ -12,16 +12,19 @@ const (
 
 // Record is the DynamoDB state record for an active runner.
 type Record struct {
-	RunnerID   string   `dynamodbav:"runner_id"`
-	InstanceID string   `dynamodbav:"instance_id"`
-	JobID      int64    `dynamodbav:"job_id"`
-	RunID      int64    `dynamodbav:"run_id"`
-	Repository string   `dynamodbav:"repository"`
-	Labels     []string `dynamodbav:"labels"`
-	Status     string   `dynamodbav:"status"`
-	CreatedAt  int64    `dynamodbav:"created_at"`
-	UpdatedAt  int64    `dynamodbav:"updated_at"`
-	TTL        int64    `dynamodbav:"ttl"`
+	RunnerID          string   `dynamodbav:"runner_id"`
+	InstanceID        string   `dynamodbav:"instance_id"`
+	JobID             int64    `dynamodbav:"job_id"`
+	RunID             int64    `dynamodbav:"run_id"`
+	Repository        string   `dynamodbav:"repository"`
+	Labels            []string `dynamodbav:"labels"`
+	Status            string   `dynamodbav:"status"`
+	CreatedAt         int64    `dynamodbav:"created_at"`
+	UpdatedAt         int64    `dynamodbav:"updated_at"`
+	TTL               int64    `dynamodbav:"ttl"`
+	GitHubRunnerID    int64    `dynamodbav:"gh_runner_id,omitempty"`
+	ReEnqueueAttempts int      `dynamodbav:"re_enqueue_attempts,omitempty"`
+	LastAttemptAt     int64    `dynamodbav:"last_attempt_at,omitempty"`
 }
 
 // NewRecord creates a runner record with sensible defaults.
