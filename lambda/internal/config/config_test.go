@@ -5,6 +5,22 @@ import (
 	"testing"
 )
 
+type fakeLoader struct {
+	values map[string][]byte
+	err    error
+}
+
+func (f *fakeLoader) Load(_ context.Context, name string) ([]byte, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	v, ok := f.values[name]
+	if !ok {
+		return nil, nil
+	}
+	return v, nil
+}
+
 func TestLoad_RequiredFields(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -116,6 +132,31 @@ func TestLoad_InstallationID(t *testing.T) {
 			t.Fatal("expected parse error, got nil")
 		}
 	})
+}
+
+func TestLoadWith_FakeLoader(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("GITHUB_APP_ID", "12345")
+	t.Setenv("SQS_QUEUE_URL", "https://sqs.us-east-1.amazonaws.com/123/queue")
+	t.Setenv("DYNAMODB_TABLE_NAME", "runners")
+	t.Setenv("GITHUB_APP_WEBHOOK_SECRET_ARN", "arn:aws:secret/webhook")
+	t.Setenv("GITHUB_APP_PRIVATE_KEY_SECRET_ARN", "arn:aws:secret/private-key")
+
+	loader := &fakeLoader{values: map[string][]byte{
+		"arn:aws:secret/webhook":     []byte("secret-from-loader"),
+		"arn:aws:secret/private-key": []byte("private-key-from-loader"),
+	}}
+
+	cfg, err := LoadWith(context.Background(), loader)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.WebhookSecret != "secret-from-loader" {
+		t.Errorf("WebhookSecret = %q", cfg.WebhookSecret)
+	}
+	if cfg.PrivateKey != "private-key-from-loader" {
+		t.Errorf("PrivateKey = %q", cfg.PrivateKey)
+	}
 }
 
 func clearEnv(t *testing.T) {

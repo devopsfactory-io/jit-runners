@@ -3,13 +3,8 @@
 // state-machine transition + GitHub deregister side-effect.
 //
 // Construction mirrors cmd/scaledown and cmd/scaleup: load AWS config,
-// build a DynamoDB client + *runner.Store, wrap it in StateAdapter to
-// satisfy the cloud-agnostic state.RunnerStore the lifecycle handler
-// consumes, mint an installation token at startup for DeregisterRunner.
-//
-// We intentionally do not introduce a provider.Bundle abstraction here —
-// that lives in the parallel #45 cloud-abstraction line and would be a
-// merge hazard for #47.
+// build the DynamoDB-backed state.RunnerStore via internal/aws/dynamo, and
+// mint an installation token at startup for DeregisterRunner.
 package main
 
 import (
@@ -24,10 +19,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 
+	awsdynamo "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/dynamo"
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/lifecycle"
-	"github.com/devopsfactory-io/jit-runners/lambda/internal/runner"
 )
 
 var (
@@ -51,8 +46,7 @@ func handler(ctx context.Context, ev events.SQSEvent) error {
 		return fmt.Errorf("load AWS config: %w", err)
 	}
 
-	store := runner.NewStore(dynamodb.NewFromConfig(awsCfg), cfg.TableName)
-	adapter := runner.NewStateAdapter(store)
+	store := awsdynamo.NewStore(dynamodb.NewFromConfig(awsCfg), cfg.TableName)
 
 	// Mint a real installation token when GITHUB_INSTALLATION_ID is set.
 	// Without it we fall back to a tokenless client and DeregisterRunner
@@ -64,7 +58,7 @@ func handler(ctx context.Context, ev events.SQSEvent) error {
 		return fmt.Errorf("github client: %w", err)
 	}
 
-	h := lifecycle.New(adapter, ghClient, log.Default())
+	h := lifecycle.New(store, ghClient, log.Default())
 
 	for _, rec := range ev.Records {
 		if err := h.HandleSQS(ctx, []byte(rec.Body)); err != nil {

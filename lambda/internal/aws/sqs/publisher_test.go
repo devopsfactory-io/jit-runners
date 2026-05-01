@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 )
 
 type mockSQSSender struct {
@@ -54,7 +56,12 @@ func TestPublisher_Publish(t *testing.T) {
 			mock := &mockSQSSender{err: tt.sendErr}
 			pub := NewPublisher(mock, "https://sqs.us-east-1.amazonaws.com/123456789/test-queue")
 
-			err := pub.Publish(context.Background(), tt.msg)
+			body, err := json.Marshal(tt.msg)
+			if err != nil {
+				t.Fatalf("marshal test msg: %v", err)
+			}
+
+			err = pub.Publish(context.Background(), queue.Msg{Body: body})
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -85,5 +92,13 @@ func TestPublisher_Publish(t *testing.T) {
 				t.Errorf("repo = %q, want %q", got.RepositoryFull, tt.msg.RepositoryFull)
 			}
 		})
+	}
+}
+
+func TestPublisher_EmptyBody(t *testing.T) {
+	mock := &mockSQSSender{}
+	pub := NewPublisher(mock, "https://sqs.us-east-1.amazonaws.com/123/q")
+	if err := pub.Publish(context.Background(), queue.Msg{}); err == nil {
+		t.Fatal("expected error for empty body, got nil")
 	}
 }

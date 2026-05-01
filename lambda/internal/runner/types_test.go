@@ -2,33 +2,30 @@ package runner
 
 import "testing"
 
-func TestNewRecord(t *testing.T) {
-	rec := NewRecord("org/repo", 123, 456, "i-abc123", []string{"self-hosted", "linux"})
+func TestNew(t *testing.T) {
+	r := New("org/repo", 123, "i-abc123", []string{"self-hosted", "linux"})
 
-	if rec.RunnerID != "org/repo#123" {
-		t.Errorf("RunnerID = %q, want %q", rec.RunnerID, "org/repo#123")
+	if r.ID != "org/repo#123" {
+		t.Errorf("ID = %q, want %q", r.ID, "org/repo#123")
 	}
-	if rec.InstanceID != "i-abc123" {
-		t.Errorf("InstanceID = %q", rec.InstanceID)
+	if r.InstanceID != "i-abc123" {
+		t.Errorf("InstanceID = %q", r.InstanceID)
 	}
-	if rec.JobID != 123 {
-		t.Errorf("JobID = %d, want 123", rec.JobID)
+	if r.Repository != "org/repo" {
+		t.Errorf("Repository = %q", r.Repository)
 	}
-	if rec.RunID != 456 {
-		t.Errorf("RunID = %d, want 456", rec.RunID)
+	if r.Status != StatusPending {
+		t.Errorf("Status = %q, want %q", r.Status, StatusPending)
 	}
-	if rec.Status != StatusPending {
-		t.Errorf("Status = %q, want %q", rec.Status, StatusPending)
+	if r.LaunchedAt.IsZero() {
+		t.Error("LaunchedAt should be non-zero")
 	}
-	if rec.CreatedAt == 0 {
-		t.Error("CreatedAt should be non-zero")
-	}
-	if rec.TTL <= rec.CreatedAt {
-		t.Error("TTL should be greater than CreatedAt")
+	if !r.TTL.After(r.LaunchedAt) {
+		t.Error("TTL should be after LaunchedAt")
 	}
 }
 
-func TestRunnerID(t *testing.T) {
+func TestID(t *testing.T) {
 	tests := []struct {
 		repo  string
 		jobID int64
@@ -39,9 +36,9 @@ func TestRunnerID(t *testing.T) {
 		{"a/b", 999999, "a/b#999999"},
 	}
 	for _, tt := range tests {
-		got := runnerID(tt.repo, tt.jobID)
+		got := ID(tt.repo, tt.jobID)
 		if got != tt.want {
-			t.Errorf("runnerID(%q, %d) = %q, want %q", tt.repo, tt.jobID, got, tt.want)
+			t.Errorf("ID(%q, %d) = %q, want %q", tt.repo, tt.jobID, got, tt.want)
 		}
 	}
 }

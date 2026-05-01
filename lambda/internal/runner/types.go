@@ -1,19 +1,20 @@
+// Package runner contains cloud-agnostic helpers for working with runner
+// state. The persistence layer lives in internal/aws/dynamo or
+// internal/gcp/firestore; this package only defines the logical types and
+// ID-derivation rules and the cleanup orchestrator (Cleaner) consumed by the
+// scaledown Lambda.
 package runner
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
 )
 
-// Runner is an alias for state.Runner. The lifecycle work uses
-// state.RunnerStore directly; aliasing here keeps callers that import
-// runner.Runner working without modification (Go type aliases are transparent).
-// New code should prefer state.Runner.
-type Runner = state.Runner
-
 // Status constants are re-exported from the canonical state package so
-// callers that historically used runner.Status* keep compiling.
+// callers that historically used runner.Status* keep compiling. New code
+// should prefer state.Status* directly.
 const (
 	StatusPending   = state.StatusPending
 	StatusRunning   = state.StatusRunning
@@ -21,62 +22,30 @@ const (
 	StatusFailed    = state.StatusFailed
 )
 
-// Record is the DynamoDB state record for an active runner.
-type Record struct {
-	RunnerID          string   `dynamodbav:"runner_id"`
-	InstanceID        string   `dynamodbav:"instance_id"`
-	JobID             int64    `dynamodbav:"job_id"`
-	RunID             int64    `dynamodbav:"run_id"`
-	Repository        string   `dynamodbav:"repository"`
-	Labels            []string `dynamodbav:"labels"`
-	Status            string   `dynamodbav:"status"`
-	CreatedAt         int64    `dynamodbav:"created_at"`
-	UpdatedAt         int64    `dynamodbav:"updated_at"`
-	TTL               int64    `dynamodbav:"ttl"`
-	GitHubRunnerID    int64    `dynamodbav:"gh_runner_id,omitempty"`
-	ReEnqueueAttempts int      `dynamodbav:"re_enqueue_attempts,omitempty"`
-	LastAttemptAt     int64    `dynamodbav:"last_attempt_at,omitempty"`
+// Runner is an alias for state.Runner so cloud-agnostic callers can refer to
+// the runner record without importing internal/state directly. New code
+// should prefer state.Runner.
+type Runner = state.Runner
+
+// ID derives the canonical runner ID from a repository full name and job ID.
+// The format ("<repo>#<jobID>") matches the pre-refactor DynamoDB primary
+// key so live records continue to round-trip.
+func ID(repository string, jobID int64) string {
+	return repository + "#" + strconv.FormatInt(jobID, 10)
 }
 
-// NewRecord creates a runner record with sensible defaults.
-func NewRecord(repository string, jobID, runID int64, instanceID string, labels []string) *Record {
-	now := time.Now().Unix()
-	return &Record{
-		RunnerID:   runnerID(repository, jobID),
+// New builds a Runner with sensible defaults: status=pending, LaunchedAt=now,
+// UpdatedAt=now, TTL=now+24h. The runner ID is derived from repository+jobID.
+func New(repository string, jobID int64, instanceID string, labels []string) Runner {
+	now := time.Now().UTC()
+	return Runner{
+		ID:         ID(repository, jobID),
 		InstanceID: instanceID,
-		JobID:      jobID,
-		RunID:      runID,
 		Repository: repository,
 		Labels:     labels,
 		Status:     StatusPending,
-		CreatedAt:  now,
+		LaunchedAt: now,
 		UpdatedAt:  now,
-		TTL:        now + 86400, // 24h TTL
+		TTL:        now.Add(24 * time.Hour),
 	}
-}
-
-func runnerID(repository string, jobID int64) string {
-	return repository + "#" + itoa(jobID)
-}
-
-func itoa(i int64) string {
-	if i == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	pos := len(buf)
-	neg := i < 0
-	if neg {
-		i = -i
-	}
-	for i > 0 {
-		pos--
-		buf[pos] = byte('0' + i%10)
-		i /= 10
-	}
-	if neg {
-		pos--
-		buf[pos] = '-'
-	}
-	return string(buf[pos:])
 }

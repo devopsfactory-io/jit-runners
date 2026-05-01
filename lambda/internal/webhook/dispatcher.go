@@ -4,19 +4,16 @@ import (
 	"context"
 	"fmt"
 
+	internalsqs "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/sqs"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/lifecycle"
-	internalsqs "github.com/devopsfactory-io/jit-runners/lambda/internal/sqs"
 )
 
 // scaleUpPublisher is the minimal surface the Handler needs from a
-// scale-up queue publisher. *internalsqs.Publisher satisfies this.
-//
-// Defined locally (rather than as a shared queue.Publisher interface)
-// so this branch does not depend on the queue-abstraction work in the
-// parallel #45 line.
+// scale-up queue publisher. *internalsqs.Publisher satisfies this via its
+// PublishScaleUp helper.
 type scaleUpPublisher interface {
-	Publish(ctx context.Context, msg *internalsqs.ScaleUpMessage) error
+	PublishScaleUp(ctx context.Context, msg *internalsqs.ScaleUpMessage) error
 }
 
 // lifecyclePublisher is the minimal surface the Handler needs from the
@@ -105,7 +102,7 @@ func (h *Handler) handleQueued(ctx context.Context, result *ParseResult) Respons
 		Labels:         result.Event.WorkflowJob.Labels,
 		InstallationID: result.Event.Installation.ID,
 	}
-	if err := h.ScaleUpPublisher.Publish(ctx, msg); err != nil {
+	if err := h.ScaleUpPublisher.PublishScaleUp(ctx, msg); err != nil {
 		return Response{Status: 500, Body: "Queue error"}
 	}
 	return Response{Status: 200, Body: "OK"}
