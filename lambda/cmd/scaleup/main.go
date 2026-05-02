@@ -19,8 +19,8 @@ import (
 
 	awsdynamo "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/dynamo"
 	awsec2 "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/ec2"
-	awsssm "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/ssm"
 	awssqs "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/sqs"
+	awsssm "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/ssm"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/compute"
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
@@ -104,7 +104,11 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, launcher compute.
 		return fmt.Errorf("generate JIT config: %w", err)
 	}
 
-	runnerLogLevel, _ := ssmLoader.Get(ctx, runnerLogLevelParam, runnerLogLevelDefault)
+	runnerLogLevel, ssmErr := ssmLoader.Get(ctx, runnerLogLevelParam, runnerLogLevelDefault)
+	if ssmErr != nil {
+		// Loader's contract guarantees fallback on errors; defensively log.
+		log.Printf("ssm: get runner log level: %v (using fallback)", ssmErr)
+	}
 
 	// Persist a pending record keyed on the GitHub runner_id BEFORE
 	// launching the EC2 instance so scaledown's stale-pending sweep can
