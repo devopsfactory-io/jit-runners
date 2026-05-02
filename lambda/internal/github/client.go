@@ -233,6 +233,60 @@ func (c *Client) ListQueuedWorkflowJobs(ctx context.Context, ownerRepo string) (
 	return queued, nil
 }
 
+type listInstallationReposResponse struct {
+	TotalCount   int `json:"total_count"`
+	Repositories []struct {
+		FullName string `json:"full_name"`
+	} `json:"repositories"`
+}
+
+// ListInstallationRepositories returns the full_names of every repository
+// the App installation can access. Pages via ?page=N&per_page=100 until
+// total_count is reached. Used by the rebalancer Lambda to scope its
+// queued-jobs query across the entire org-level installation.
+func (c *Client) ListInstallationRepositories(ctx context.Context) ([]string, error) {
+	const perPage = 100
+	var out []string
+	page := 1
+	for {
+		url := fmt.Sprintf("%s/installation/repositories?per_page=%d&page=%d", c.baseURL, perPage, page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("Authorization", "Bearer "+c.token)
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+		resp, err := c.httpClient.Do(req) //nolint:gosec // G704: URL from GitHub API constant
+		if err != nil {
+			return nil, fmt.Errorf("github: list installation repositories page %d: %w", page, err)
+		}
+		body, decodeErr := func() (listInstallationReposResponse, error) {
+			defer resp.Body.Close() //nolint:errcheck // best-effort close
+			if resp.StatusCode != http.StatusOK {
+				return listInstallationReposResponse{}, fmt.Errorf("status %d", resp.StatusCode)
+			}
+			var b listInstallationReposResponse
+			if err := json.NewDecoder(resp.Body).Decode(&b); err != nil {
+				return listInstallationReposResponse{}, fmt.Errorf("decode: %w", err)
+			}
+			return b, nil
+		}()
+		if decodeErr != nil {
+			return nil, fmt.Errorf("github: list installation repositories page %d: %w", page, decodeErr)
+		}
+		for _, r := range body.Repositories {
+			out = append(out, r.FullName)
+		}
+		if len(out) >= body.TotalCount || len(body.Repositories) == 0 {
+			break
+		}
+		page++
+	}
+	return out, nil
+}
+
 func (c *Client) listQueuedRuns(ctx context.Context, ownerRepo string) ([]struct {
 	ID int64 `json:"id"`
 }, error) {

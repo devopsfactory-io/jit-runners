@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 )
 
@@ -176,6 +177,93 @@ func TestListQueuedWorkflowJobs(t *testing.T) {
 		_, err := c.ListQueuedWorkflowJobs(context.Background(), "owner/repo")
 		if err == nil {
 			t.Fatal("expected error on 429, got nil")
+		}
+	})
+}
+
+func TestListInstallationRepositories(t *testing.T) {
+	t.Run("empty installation returns empty slice", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/installation/repositories" {
+				t.Errorf("unexpected path %q", r.URL.Path)
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"total_count":0,"repositories":[]}`))
+		}))
+		defer srv.Close()
+		c := NewClientWithBase("tok", srv.URL)
+		got, err := c.ListInstallationRepositories(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("expected 0 repos, got %d: %v", len(got), got)
+		}
+	})
+
+	t.Run("single page returns all full_names", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"total_count":2,"repositories":[
+				{"full_name":"devopsfactory-io/jit-runners"},
+				{"full_name":"devopsfactory-io/neptune"}
+			]}`))
+		}))
+		defer srv.Close()
+		c := NewClientWithBase("tok", srv.URL)
+		got, err := c.ListInstallationRepositories(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := []string{"devopsfactory-io/jit-runners", "devopsfactory-io/neptune"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("paginates by page query param until total_count reached", func(t *testing.T) {
+		var calls int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			page := r.URL.Query().Get("page")
+			w.WriteHeader(http.StatusOK)
+			switch page {
+			case "", "1":
+				_, _ = w.Write([]byte(`{"total_count":3,"repositories":[
+					{"full_name":"o/a"},{"full_name":"o/b"}
+				]}`))
+			case "2":
+				_, _ = w.Write([]byte(`{"total_count":3,"repositories":[
+					{"full_name":"o/c"}
+				]}`))
+			default:
+				t.Errorf("unexpected page %q", page)
+			}
+		}))
+		defer srv.Close()
+		c := NewClientWithBase("tok", srv.URL)
+		got, err := c.ListInstallationRepositories(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := []string{"o/a", "o/b", "o/c"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+		if calls != 2 {
+			t.Errorf("expected 2 page fetches, got %d", calls)
+		}
+	})
+
+	t.Run("non-200 returns error", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+		c := NewClientWithBase("tok", srv.URL)
+		_, err := c.ListInstallationRepositories(context.Background())
+		if err == nil {
+			t.Fatal("expected error, got nil")
 		}
 	})
 }
