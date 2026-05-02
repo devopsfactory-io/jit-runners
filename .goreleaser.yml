@@ -49,6 +49,17 @@ builds:
     goarch:
       - amd64
 
+  - id: rebalancer
+    dir: lambda
+    main: ./cmd/rebalancer
+    binary: bootstrap
+    ldflags:
+      - -s -w
+    goos:
+      - linux
+    goarch:
+      - amd64
+
 archives:
   - id: webhook-zip
     ids:
@@ -87,6 +98,16 @@ archives:
       - zip
     name_template: >-
       lifecycle-{{ .Os }}-{{ .Arch }}
+    strip_binary_directory: true
+    wrap_in_directory: false
+
+  - id: rebalancer-zip
+    ids:
+      - rebalancer
+    formats:
+      - zip
+    name_template: >-
+      rebalancer-{{ .Os }}-{{ .Arch }}
     strip_binary_directory: true
     wrap_in_directory: false
 
