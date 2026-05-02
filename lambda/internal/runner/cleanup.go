@@ -251,4 +251,3 @@ func (c *Cleaner) now() time.Time {
 	}
 	return time.Now()
 }
-

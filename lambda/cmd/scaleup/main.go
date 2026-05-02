@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	awsec2sdk "github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/google/uuid"
 
 	awsdynamo "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/dynamo"
 	awsec2 "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/ec2"
@@ -23,7 +24,6 @@ import (
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/runner"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/webhook"
-	"github.com/google/uuid"
 )
 
 const defaultRunnerVersion = "2.332.0"
