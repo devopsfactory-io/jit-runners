@@ -78,15 +78,15 @@ func TestHandleSQS_TransitionTable(t *testing.T) {
 		{"completed+in_progress -> drop (backward)", state.StatusCompleted, "in_progress", 99, state.StatusCompleted, false, false},
 		{"running+in_progress -> no-op", state.StatusRunning, "in_progress", 99, state.StatusRunning, false, false},
 		{"completed+unknown_action -> drop", state.StatusCompleted, "waiting", 99, state.StatusCompleted, false, false},
-		{"completed with zero runnerID -> update only", state.StatusRunning, "completed", 0, state.StatusCompleted, true, false},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			store := &fakeStore{get: state.Runner{
-				ID:             "owner/repo#1",
+				ID:             "99",
 				Status:         tc.current,
 				GitHubRunnerID: tc.ghRunnerID,
+				Repository:     "owner/repo",
 			}}
 			gh := &fakeGitHub{}
 			h := &Handler{Store: store, GitHub: gh, Logger: testLogger()}
@@ -101,6 +101,9 @@ func TestHandleSQS_TransitionTable(t *testing.T) {
 				t.Errorf("update: got %v want %v (updates=%+v)", gotUpdate, tc.wantUpdate, store.updates)
 			}
 			if tc.wantUpdate {
+				if store.updates[0].id != "99" {
+					t.Errorf("update key: got %q want %q", store.updates[0].id, "99")
+				}
 				if store.updates[0].fields.Status == nil {
 					t.Fatal("Status: expected non-nil pointer")
 				}
@@ -116,14 +119,6 @@ func TestHandleSQS_TransitionTable(t *testing.T) {
 			if gotDereg != tc.wantDeregister {
 				t.Errorf("deregister: got %v want %v (calls=%+v)", gotDereg, tc.wantDeregister, gh.calls)
 			}
-			if tc.wantDeregister {
-				if gh.calls[0].runnerID != tc.ghRunnerID {
-					t.Errorf("deregister runnerID: got %d want %d", gh.calls[0].runnerID, tc.ghRunnerID)
-				}
-				if gh.calls[0].repo != "owner/repo" {
-					t.Errorf("deregister repo: got %q want %q", gh.calls[0].repo, "owner/repo")
-				}
-			}
 		})
 	}
 }
@@ -133,7 +128,28 @@ func TestHandleSQS_UnknownRecordDrops(t *testing.T) {
 	gh := &fakeGitHub{}
 	h := &Handler{Store: store, GitHub: gh, Logger: testLogger()}
 
-	body := []byte(`{"job_id":1,"repo":"owner/repo","action":"completed"}`)
+	body := []byte(`{"job_id":1,"repo":"owner/repo","runner_id":99,"action":"completed"}`)
+	if err := h.HandleSQS(context.Background(), body); err != nil {
+		t.Fatalf("HandleSQS: %v", err)
+	}
+	if len(store.updates) != 0 {
+		t.Errorf("expected no updates, got %+v", store.updates)
+	}
+	if len(gh.calls) != 0 {
+		t.Errorf("expected no deregister, got %+v", gh.calls)
+	}
+}
+
+func TestHandleSQS_DropsWhenRunnerIDZero(t *testing.T) {
+	store := &fakeStore{}
+	gh := &fakeGitHub{}
+	h := &Handler{Store: store, GitHub: gh, Logger: testLogger()}
+
+	// runner_id == 0 is the defensive case: GitHub did not include a
+	// runner ID in the workflow_job payload. The handler must drop the
+	// message without attempting a Get (avoids a meaningless lookup at
+	// key "0") and without returning an error (the message is ack'd).
+	body := []byte(`{"job_id":1,"repo":"owner/repo","runner_id":0,"action":"completed"}`)
 	if err := h.HandleSQS(context.Background(), body); err != nil {
 		t.Fatalf("HandleSQS: %v", err)
 	}
@@ -146,11 +162,11 @@ func TestHandleSQS_UnknownRecordDrops(t *testing.T) {
 }
 
 func TestHandleSQS_DeregisterErrorDoesNotFail(t *testing.T) {
-	store := &fakeStore{get: state.Runner{Status: state.StatusRunning, GitHubRunnerID: 99}}
+	store := &fakeStore{get: state.Runner{ID: "99", Status: state.StatusRunning, GitHubRunnerID: 99, Repository: "owner/repo"}}
 	gh := &fakeGitHub{err: errors.New("network blip")}
 	h := &Handler{Store: store, GitHub: gh, Logger: testLogger()}
 
-	body := []byte(`{"job_id":1,"repo":"owner/repo","action":"completed"}`)
+	body := []byte(`{"job_id":1,"repo":"owner/repo","runner_id":99,"action":"completed"}`)
 	if err := h.HandleSQS(context.Background(), body); err != nil {
 		t.Fatalf("HandleSQS: %v", err)
 	}
