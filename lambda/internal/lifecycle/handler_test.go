@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
 )
@@ -38,6 +39,10 @@ func (f *fakeStore) Delete(_ context.Context, _ string) error { return nil }
 func (f *fakeStore) Update(_ context.Context, id string, u state.RunnerUpdate) error {
 	f.updates = append(f.updates, updateCall{id: id, fields: u})
 	return f.updateErr
+}
+
+func (f *fakeStore) ListActiveRepos(_ context.Context, _ time.Time) ([]string, error) {
+	return nil, nil
 }
 
 // fakeGitHub records DeregisterRunner calls.

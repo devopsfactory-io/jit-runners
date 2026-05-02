@@ -46,6 +46,9 @@ func (f *fakeStore) Update(_ context.Context, id string, u state.RunnerUpdate) e
 }
 
 func (f *fakeStore) Delete(_ context.Context, _ string) error { return nil }
+func (f *fakeStore) ListActiveRepos(_ context.Context, _ time.Time) ([]string, error) {
+	return nil, nil
+}
 
 // fakeLauncher records terminate calls and may inject an error. It also
 // satisfies compute.Launcher (Launch and ListStale return zero values; the

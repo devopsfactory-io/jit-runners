@@ -3,6 +3,7 @@ package dynamo
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
 	"time"
 
@@ -278,6 +279,56 @@ func TestStore_Put_RoundTripsJobIDAndWorkflowRunID(t *testing.T) {
 	if got.WorkflowRunID != 9012 {
 		t.Errorf("WorkflowRunID = %d, want 9012", got.WorkflowRunID)
 	}
+}
+
+func TestListActiveRepos(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	t.Run("empty result returns empty slice", func(t *testing.T) {
+		mock := &mockDDB{scanOut: &dynamodb.ScanOutput{Items: []map[string]types.AttributeValue{}}}
+		s := NewStore(mock, "runners")
+		got, err := s.ListActiveRepos(ctx, now.Add(-time.Hour))
+		if err != nil {
+			t.Fatalf("ListActiveRepos: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("expected 0 repos, got %d: %v", len(got), got)
+		}
+	})
+
+	t.Run("dedupes repository values from scan output", func(t *testing.T) {
+		items := []map[string]types.AttributeValue{
+			{"repository": &types.AttributeValueMemberS{Value: "o/a"}},
+			{"repository": &types.AttributeValueMemberS{Value: "o/a"}},
+			{"repository": &types.AttributeValueMemberS{Value: "o/b"}},
+		}
+		mock := &mockDDB{scanOut: &dynamodb.ScanOutput{Items: items}}
+		s := NewStore(mock, "runners")
+		got, err := s.ListActiveRepos(ctx, now.Add(-time.Hour))
+		if err != nil {
+			t.Fatalf("ListActiveRepos: %v", err)
+		}
+		sort.Strings(got)
+		want := []string{"o/a", "o/b"}
+		if len(got) != len(want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("got[%d]=%q, want %q", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("propagates Scan error", func(t *testing.T) {
+		mock := &mockDDB{err: errors.New("dynamo unavailable")}
+		s := NewStore(mock, "runners")
+		_, err := s.ListActiveRepos(ctx, now.Add(-time.Hour))
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
 }
 
 func stringPtr(s string) *string     { return &s }

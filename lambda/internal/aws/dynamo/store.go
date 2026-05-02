@@ -261,6 +261,39 @@ func (s *Store) Update(ctx context.Context, id string, u state.RunnerUpdate) err
 	return nil
 }
 
+// ListActiveRepos returns the deduped Repository values across runner records
+// whose created_at (LaunchedAt) is at or after since. It uses a server-side
+// FilterExpression so that only matching items are returned from DynamoDB.
+// Results need not be sorted; callers that need stable ordering must sort.
+func (s *Store) ListActiveRepos(ctx context.Context, since time.Time) ([]string, error) {
+	input := &dynamodb.ScanInput{
+		TableName:            aws.String(s.tableName),
+		ProjectionExpression: aws.String("repository, created_at"),
+		FilterExpression:     aws.String("created_at >= :since"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":since": &types.AttributeValueMemberN{Value: strconv.FormatInt(since.Unix(), 10)},
+		},
+	}
+	out, err := s.client.Scan(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("scan active repos: %w", err)
+	}
+	seen := make(map[string]struct{})
+	var repos []string
+	for _, item := range out.Items {
+		v, ok := item["repository"].(*types.AttributeValueMemberS)
+		if !ok || v.Value == "" {
+			continue
+		}
+		if _, dup := seen[v.Value]; dup {
+			continue
+		}
+		seen[v.Value] = struct{}{}
+		repos = append(repos, v.Value)
+	}
+	return repos, nil
+}
+
 // Delete removes a runner record by its ID.
 func (s *Store) Delete(ctx context.Context, id string) error {
 	if id == "" {
