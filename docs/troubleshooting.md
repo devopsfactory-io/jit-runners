@@ -560,3 +560,72 @@ The previous form `jit-<job_id>` implied a binding GitHub does not enforce. Futu
 - [REST API: self-hosted runners](https://docs.github.com/en/rest/actions/self-hosted-runners) — `generate-jitconfig` request body.
 - [GitHub Changelog: Just-in-time self-hosted runners (2023-06-02)](https://github.blog/changelog/2023-06-02-github-actions-just-in-time-self-hosted-runners/).
 - Issue [devopsfactory-io/jit-runners#52](https://github.com/devopsfactory-io/jit-runners/issues/52) and the design spec at `repositories/zettelkasten/Projects/jit-runners/specs/2026-05-02-runner-id-realignment-design.md`.
+
+## Debugging silent runner failures
+
+A "silent runner failure" is the case where an EC2 spot instance launches, the runner agent exits within seconds, and the instance terminates without ever picking up its assigned job. The first symptom is usually a CI job stuck in `queued` for minutes despite `scaleup` reporting a successful launch.
+
+### Quick check: did silent failures fire?
+
+```bash
+aws cloudwatch get-metric-statistics \
+  --namespace JitRunners/RunnerAgent \
+  --metric-name SilentFailures \
+  --start-time $(date -u -v-1H +%FT%TZ) \
+  --end-time $(date -u +%FT%TZ) \
+  --period 300 \
+  --statistics Sum
+```
+
+A non-zero `Sum` means at least one runner emitted `JIT_NO_JOB_PICKUP` in the past hour.
+
+### Find the affected runner_id
+
+```bash
+aws logs filter-log-events \
+  --log-group-name /jit-runners/userdata \
+  --filter-pattern '"JIT_NO_JOB_PICKUP"' \
+  --start-time $(($(date +%s) - 3600))000 \
+  --query 'events[].{ts:timestamp,msg:message}' \
+  --output table
+```
+
+Each match contains the `runner_id` and the `runtime` in seconds.
+
+### Inspect the runner-agent diag logs
+
+The CloudWatch agent ships `_diag/Runner_*.log` and `_diag/Worker_*.log` to `/jit-runners/runner-agent`, stream `<runner_id>/<instance_id>`:
+
+```bash
+aws logs tail /jit-runners/runner-agent --since 1h --filter-pattern '"<runner_id>"'
+```
+
+Or open the AWS Console: CloudWatch → Log groups → `/jit-runners/runner-agent` → log stream prefixed `<runner_id>/`.
+
+### Increase verbosity for the next runners
+
+Flip the SSM toggle to `debug`. Effect is visible on the next-but-one scaleup invocation (≤30s due to the in-process cache):
+
+```bash
+aws ssm put-parameter \
+  --name /jit-runners/runner-log-level \
+  --value debug \
+  --overwrite
+```
+
+Reproduce the issue, inspect the debug-level log lines (look for `##[debug]` markers in `Worker_*.log`), then revert:
+
+```bash
+aws ssm put-parameter \
+  --name /jit-runners/runner-log-level \
+  --value info \
+  --overwrite
+```
+
+### Reproducing a silent failure for testing
+
+To exercise the silent-failure path on demand without a real workload:
+
+1. Generate a JIT config: `gh api -X POST repos/<owner>/<repo>/actions/runners/generate-jitconfig -f name=test -f labels[]=self-hosted -F runner_group_id=1`. Capture the `runner.id`.
+2. Immediately revoke it: `gh api -X DELETE repos/<owner>/<repo>/actions/runners/<runner.id>`.
+3. Send a synthetic SQS message to the scaleup queue carrying the revoked `encoded_jit_config`. A new spot instance launches, registers nothing, exits, and emits `JIT_NO_JOB_PICKUP`.
