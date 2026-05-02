@@ -28,7 +28,6 @@ resource "aws_lambda_function" "rebalancer" {
       GITHUB_APP_WEBHOOK_SECRET_ARN     = var.webhook_secret_arn
       DYNAMODB_TABLE_NAME               = aws_dynamodb_table.runners.name
       SQS_QUEUE_URL                     = aws_sqs_queue.scaleup.url
-      REPOSITORY_FULL                   = var.repository_full
     }
   }
 
