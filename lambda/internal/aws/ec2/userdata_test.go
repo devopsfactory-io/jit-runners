@@ -29,6 +29,7 @@ func TestGenerateUserData(t *testing.T) {
 				"export RUNNER_ID=42",
 				"sed -i \"s|\\${RUNNER_ID}|${RUNNER_ID}|g\" /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json",
 				"systemctl restart amazon-cloudwatch-agent",
+				"su - runner -c \"export ACTIONS_RUNNER_DEBUG=",
 				"./run.sh --jitconfig",
 				"tee /var/log/jit-runner-userdata.log",
 				"RUNTIME_SECS",

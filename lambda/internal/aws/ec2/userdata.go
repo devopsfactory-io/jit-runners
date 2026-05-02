@@ -81,7 +81,7 @@ fi
 echo "Starting runner with JIT config..."
 START_TIME=$(date +%s)
 set +e
-su - runner -c "cd /home/runner/actions-runner && ./run.sh --jitconfig '${JIT_CONFIG}'" 2>&1 | tee /var/log/jit-runner-userdata.log
+su - runner -c "export ACTIONS_RUNNER_DEBUG=${ACTIONS_RUNNER_DEBUG:-false} ACTIONS_STEP_DEBUG=${ACTIONS_STEP_DEBUG:-false}; cd /home/runner/actions-runner && ./run.sh --jitconfig '${JIT_CONFIG}'" 2>&1 | tee /var/log/jit-runner-userdata.log
 RUNNER_EXIT=${PIPESTATUS[0]}
 set -e
 END_TIME=$(date +%s)
