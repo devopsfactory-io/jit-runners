@@ -80,8 +80,8 @@ func Rebalance(ctx context.Context, gh QueueLister, store state.RunnerStore, pub
 			totalPublished++
 		}
 	}
-	log.Printf("rebalancer: cycle complete demand=%d supply=%d published=%d label_sets=%d",
-		len(queued), len(pending), totalPublished, len(groups))
+	log.Printf("rebalancer: cycle complete repo=%s demand=%d supply=%d published=%d label_sets=%d",
+		repoFull, len(queued), len(pending), totalPublished, len(groups))
 	if len(publishErrs) > 0 {
 		return errors.Join(publishErrs...)
 	}
