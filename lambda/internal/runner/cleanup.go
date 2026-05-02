@@ -148,6 +148,7 @@ func (c *Cleaner) sweepStalePending(ctx context.Context, runners []state.Runner,
 				JobID:             r.JobID,
 				RepositoryFull:    r.Repository,
 				Labels:            r.Labels,
+				Source:            awssqs.SourceWebhook,
 				ReEnqueueAttempts: next,
 			}
 			if err := c.ScaleUpPublisher.PublishScaleUp(ctx, msg); err != nil {

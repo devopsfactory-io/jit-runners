@@ -98,6 +98,9 @@ func TestHandler_Handle_QueuedPublishesToScaleUp(t *testing.T) {
 	if scaleUp.last.EventAction != "queued" {
 		t.Errorf("scaleUp.EventAction = %q, want queued", scaleUp.last.EventAction)
 	}
+	if scaleUp.last.Source != internalsqs.SourceWebhook {
+		t.Errorf("Source = %q, want %q", scaleUp.last.Source, internalsqs.SourceWebhook)
+	}
 }
 
 func TestHandler_Handle_QueuedPublishError(t *testing.T) {

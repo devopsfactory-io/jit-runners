@@ -101,6 +101,7 @@ func (h *Handler) handleQueued(ctx context.Context, result *ParseResult) Respons
 		RepositoryFull: result.Event.Repository.FullName,
 		Labels:         result.Event.WorkflowJob.Labels,
 		InstallationID: result.Event.Installation.ID,
+		Source:         internalsqs.SourceWebhook,
 	}
 	if err := h.ScaleUpPublisher.PublishScaleUp(ctx, msg); err != nil {
 		return Response{Status: 500, Body: "Queue error"}
