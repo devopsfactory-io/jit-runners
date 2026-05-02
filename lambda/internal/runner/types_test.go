@@ -1,12 +1,41 @@
 package runner
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
+
+func TestIDFromGitHubRunnerID(t *testing.T) {
+	tests := []struct {
+		ghID int64
+		want string
+	}{
+		{12345, "12345"},
+		{1, "1"},
+		{0, "0"},
+	}
+	for _, tt := range tests {
+		got := IDFromGitHubRunnerID(tt.ghID)
+		if got != tt.want {
+			t.Errorf("IDFromGitHubRunnerID(%d) = %q, want %q", tt.ghID, got, tt.want)
+		}
+	}
+}
 
 func TestNew(t *testing.T) {
-	r := New("org/repo", 123, "i-abc123", []string{"self-hosted", "linux"})
+	r := New("org/repo", 99887766, "i-abc123", 12345, 67890, []string{"self-hosted", "large"})
 
-	if r.ID != "org/repo#123" {
-		t.Errorf("ID = %q, want %q", r.ID, "org/repo#123")
+	if r.ID != "99887766" {
+		t.Errorf("ID = %q, want %q", r.ID, "99887766")
+	}
+	if r.GitHubRunnerID != 99887766 {
+		t.Errorf("GitHubRunnerID = %d, want 99887766", r.GitHubRunnerID)
+	}
+	if r.JobID != 12345 {
+		t.Errorf("JobID = %d, want 12345", r.JobID)
+	}
+	if r.WorkflowRunID != 67890 {
+		t.Errorf("WorkflowRunID = %d, want 67890", r.WorkflowRunID)
 	}
 	if r.InstanceID != "i-abc123" {
 		t.Errorf("InstanceID = %q", r.InstanceID)
@@ -23,22 +52,8 @@ func TestNew(t *testing.T) {
 	if !r.TTL.After(r.LaunchedAt) {
 		t.Error("TTL should be after LaunchedAt")
 	}
-}
-
-func TestID(t *testing.T) {
-	tests := []struct {
-		repo  string
-		jobID int64
-		want  string
-	}{
-		{"org/repo", 123, "org/repo#123"},
-		{"user/project", 0, "user/project#0"},
-		{"a/b", 999999, "a/b#999999"},
-	}
-	for _, tt := range tests {
-		got := ID(tt.repo, tt.jobID)
-		if got != tt.want {
-			t.Errorf("ID(%q, %d) = %q, want %q", tt.repo, tt.jobID, got, tt.want)
-		}
+	// Defensive: ID and GitHubRunnerID must be consistent.
+	if r.ID != strconv.FormatInt(r.GitHubRunnerID, 10) {
+		t.Errorf("ID and GitHubRunnerID inconsistent: ID=%q GitHubRunnerID=%d", r.ID, r.GitHubRunnerID)
 	}
 }

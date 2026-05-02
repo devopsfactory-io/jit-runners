@@ -145,7 +145,7 @@ func (c *Cleaner) sweepStalePending(ctx context.Context, runners []state.Runner,
 			next := r.ReEnqueueAttempts + 1
 			msg := &awssqs.ScaleUpMessage{
 				EventAction:       "queued",
-				JobID:             jobIDFromRunner(r),
+				JobID:             r.JobID,
 				RepositoryFull:    r.Repository,
 				Labels:            r.Labels,
 				ReEnqueueAttempts: next,
@@ -252,22 +252,3 @@ func (c *Cleaner) now() time.Time {
 	return time.Now()
 }
 
-// jobIDFromRunner extracts the trailing numeric component of a runner ID
-// encoded as "<repository>#<jobID>". Returns 0 when the ID is malformed.
-// The re-enqueue path needs JobID to populate the new SQS message.
-func jobIDFromRunner(r state.Runner) int64 {
-	id := r.ID
-	for i := len(id) - 1; i >= 0; i-- {
-		if id[i] == '#' {
-			var n int64
-			for _, c := range id[i+1:] {
-				if c < '0' || c > '9' {
-					return 0
-				}
-				n = n*10 + int64(c-'0')
-			}
-			return n
-		}
-	}
-	return 0
-}

@@ -27,25 +27,34 @@ const (
 // should prefer state.Runner.
 type Runner = state.Runner
 
-// ID derives the canonical runner ID from a repository full name and job ID.
-// The format ("<repo>#<jobID>") matches the pre-refactor DynamoDB primary
-// key so live records continue to round-trip.
-func ID(repository string, jobID int64) string {
-	return repository + "#" + strconv.FormatInt(jobID, 10)
+// IDFromGitHubRunnerID derives the canonical runner ID from a GitHub runner
+// ID returned by the generate-jitconfig endpoint. The format is the decimal
+// string form of the int64; this is the DynamoDB partition key value.
+//
+// JobID and workflow_run_id are intentionally NOT part of the ID — GitHub's
+// JIT contract does not bind a registered runner to either, and earlier
+// "<repo>#<jobID>" encodings produced racy lookups under concurrent jobs.
+// See zettelkasten Projects/jit-runners/specs/2026-05-02-runner-id-realignment-design.md.
+func IDFromGitHubRunnerID(ghRunnerID int64) string {
+	return strconv.FormatInt(ghRunnerID, 10)
 }
 
 // New builds a Runner with sensible defaults: status=pending, LaunchedAt=now,
-// UpdatedAt=now, TTL=now+24h. The runner ID is derived from repository+jobID.
-func New(repository string, jobID int64, instanceID string, labels []string) Runner {
+// UpdatedAt=now, TTL=now+24h. The runner ID is derived from githubRunnerID.
+// jobID and workflowRunID are stored as observability metadata only.
+func New(repository string, githubRunnerID int64, instanceID string, jobID int64, workflowRunID int64, labels []string) Runner {
 	now := time.Now().UTC()
 	return Runner{
-		ID:         ID(repository, jobID),
-		InstanceID: instanceID,
-		Repository: repository,
-		Labels:     labels,
-		Status:     StatusPending,
-		LaunchedAt: now,
-		UpdatedAt:  now,
-		TTL:        now.Add(24 * time.Hour),
+		ID:             IDFromGitHubRunnerID(githubRunnerID),
+		InstanceID:     instanceID,
+		Repository:     repository,
+		Labels:         labels,
+		Status:         StatusPending,
+		LaunchedAt:     now,
+		UpdatedAt:      now,
+		TTL:            now.Add(24 * time.Hour),
+		GitHubRunnerID: githubRunnerID,
+		JobID:          jobID,
+		WorkflowRunID:  workflowRunID,
 	}
 }
