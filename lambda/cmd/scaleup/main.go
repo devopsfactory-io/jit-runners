@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -24,6 +23,7 @@ import (
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/runner"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/webhook"
+	"github.com/google/uuid"
 )
 
 const defaultRunnerVersion = "2.332.0"
@@ -72,48 +72,33 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, launcher compute.
 		return nil // don't retry malformed messages
 	}
 
-	// Idempotency check. Skip only when an in-flight runner is already
-	// registered and running. A pending record may be a partial write from a
-	// prior attempt that died before Launch — we still want to retry. A
-	// failed record (e.g. written by scaledown after a stale-pending reap)
-	// signals the runner was deregistered and the message has been
-	// re-enqueued, so a fresh registration + launch is appropriate.
-	id := runner.ID(msg.RepositoryFull, msg.JobID)
-	existing, err := store.Get(ctx, id)
-	if err != nil && !errors.Is(err, state.ErrNotFound) {
-		return fmt.Errorf("check existing runner: %w", err)
-	}
-	recordExists := !errors.Is(err, state.ErrNotFound) && existing.ID != ""
-	if recordExists && existing.Status == state.StatusRunning {
-		log.Printf("runner already running for %s job=%d, skipping", msg.RepositoryFull, msg.JobID)
-		return nil
-	}
-
 	// Get installation token.
 	token, err := github.InstallationToken(ctx, cfg.AppID, cfg.PrivateKey, msg.InstallationID)
 	if err != nil {
 		return fmt.Errorf("get installation token: %w", err)
 	}
 
-	// Generate JIT runner config. Note the runner is registered with GitHub
-	// at this point; if anything below fails we must deregister it.
+	// Generate JIT runner config. The runner is registered with GitHub at
+	// this point; if anything below fails we must deregister it. The runner
+	// name is purely cosmetic per GitHub's JIT contract — we use a UUID so
+	// no future reader assumes a binding to job_id or workflow_run_id.
 	ghClient := github.NewClient(token)
-	runnerName := fmt.Sprintf("jit-%d", msg.JobID)
+	runnerName := "jit-" + uuid.NewString()
 	customLabels := webhook.CustomLabels(msg.Labels)
 	jitCfg, err := ghClient.GenerateJITConfig(ctx, msg.RepositoryFull, runnerName, msg.Labels)
 	if err != nil {
 		return fmt.Errorf("generate JIT config: %w", err)
 	}
 
-	// Persist a pending record BEFORE launching the EC2 instance so that
-	// scaledown's stale-pending sweep can reap orphans if scaleup itself
-	// dies between RunInstances and the post-launch update. The record
-	// carries the GitHub runner ID (for deregistration) and the re-enqueue
-	// counter.
-	pending := runner.New(msg.RepositoryFull, msg.JobID, "", msg.Labels)
-	pending.GitHubRunnerID = jitCfg.Runner.ID
+	// Persist a pending record keyed on the GitHub runner_id BEFORE
+	// launching the EC2 instance so scaledown's stale-pending sweep can
+	// reap orphans if scaleup itself dies between RunInstances and the
+	// post-launch update. The record carries jitCfg.Runner.ID as both the
+	// primary key and the GitHubRunnerID attribute. JobID and
+	// WorkflowRunID are observability metadata, never lookup keys.
+	pending := runner.New(msg.RepositoryFull, jitCfg.Runner.ID, "", msg.JobID, msg.RunID, msg.Labels)
 	pending.ReEnqueueAttempts = msg.ReEnqueueAttempts
-	if err := writePendingRecord(ctx, ghClient, store, msg, pending, recordExists); err != nil {
+	if err := writePendingRecord(ctx, ghClient, store, msg, pending); err != nil {
 		return err
 	}
 
@@ -167,45 +152,26 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, launcher compute.
 		// The instance is launched and the runner is registered — log and
 		// continue so the message is ack'd. Scaledown will reconcile if
 		// anything goes wrong from here.
-		log.Printf("failed to update runner record with instance %s for %s job=%d: %v",
-			inst.ID, msg.RepositoryFull, msg.JobID, err)
+		log.Printf("failed to update runner record with instance %s for runner=%d job=%d: %v",
+			inst.ID, jitCfg.Runner.ID, msg.JobID, err)
 	}
 
-	log.Printf("launched instance %s for %s job=%d", inst.ID, msg.RepositoryFull, msg.JobID)
+	log.Printf("launched instance %s for runner=%d job=%d (%s)",
+		inst.ID, jitCfg.Runner.ID, msg.JobID, msg.RepositoryFull)
 	return nil
 }
 
-// writePendingRecord persists pending as the pre-launch state. If a
-// non-running record already exists (recordExists=true), the writer Updates
-// the existing row instead of Putting. Any failure deregisters the GitHub
-// runner so we don't leak registration state.
-func writePendingRecord(ctx context.Context, gh *github.Client, store state.RunnerStore, msg *awssqs.ScaleUpMessage, pending state.Runner, recordExists bool) error {
-	if !recordExists {
-		if err := store.Put(ctx, pending); err != nil {
-			if derr := gh.DeregisterRunner(ctx, msg.RepositoryFull, pending.GitHubRunnerID); derr != nil {
-				log.Printf("deregister after pending-put failure for %s job=%d: %v", msg.RepositoryFull, msg.JobID, derr)
-			}
-			return fmt.Errorf("put pending runner record: %w", err)
-		}
-		return nil
-	}
-	// Refresh the existing non-running record (typically pending or failed
-	// from a prior attempt) so the GitHub runner ID and re-enqueue counter
-	// reflect the current attempt before launch.
-	now := time.Now()
-	statusPending := state.StatusPending
-	ghID := pending.GitHubRunnerID
-	attempts := pending.ReEnqueueAttempts
-	if err := store.Update(ctx, pending.ID, state.RunnerUpdate{
-		Status:            &statusPending,
-		GitHubRunnerID:    &ghID,
-		ReEnqueueAttempts: &attempts,
-		LastAttemptAt:     &now,
-	}); err != nil {
+// writePendingRecord persists pending as the pre-launch state. Always a
+// fresh Put — the partition key is the just-returned GitHub runner_id and
+// no prior record can exist at that key. On Put failure we deregister the
+// GitHub runner so we don't leak registration state.
+func writePendingRecord(ctx context.Context, gh *github.Client, store state.RunnerStore, msg *awssqs.ScaleUpMessage, pending state.Runner) error {
+	if err := store.Put(ctx, pending); err != nil {
 		if derr := gh.DeregisterRunner(ctx, msg.RepositoryFull, pending.GitHubRunnerID); derr != nil {
-			log.Printf("deregister after pending-update failure for %s job=%d: %v", msg.RepositoryFull, msg.JobID, derr)
+			log.Printf("deregister after pending-put failure for runner=%d job=%d: %v",
+				pending.GitHubRunnerID, msg.JobID, derr)
 		}
-		return fmt.Errorf("refresh pending runner record: %w", err)
+		return fmt.Errorf("put pending runner record: %w", err)
 	}
 	return nil
 }
@@ -216,7 +182,7 @@ func writePendingRecord(ctx context.Context, gh *github.Client, store state.Runn
 // error.
 func markLaunchFailed(ctx context.Context, gh *github.Client, store state.RunnerStore, msg *awssqs.ScaleUpMessage, recordID string, ghRunnerID int64) {
 	if err := gh.DeregisterRunner(ctx, msg.RepositoryFull, ghRunnerID); err != nil {
-		log.Printf("deregister runner %d after launch failure for %s job=%d: %v",
+		log.Printf("deregister runner=%d after launch failure for %s job=%d: %v",
 			ghRunnerID, msg.RepositoryFull, msg.JobID, err)
 	}
 	now := time.Now()
@@ -225,7 +191,8 @@ func markLaunchFailed(ctx context.Context, gh *github.Client, store state.Runner
 		Status:        &failed,
 		LastAttemptAt: &now,
 	}); err != nil {
-		log.Printf("mark runner failed for %s job=%d: %v", msg.RepositoryFull, msg.JobID, err)
+		log.Printf("mark runner failed for runner=%d job=%d: %v",
+			ghRunnerID, msg.JobID, err)
 	}
 }
 
