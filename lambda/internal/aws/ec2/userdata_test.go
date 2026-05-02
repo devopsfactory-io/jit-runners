@@ -27,6 +27,7 @@ func TestGenerateUserData(t *testing.T) {
 				"RUNNER_VERSION=\"2.321.0\"",
 				"JIT_CONFIG=\"encoded-jit-config-string\"",
 				"export RUNNER_ID=42",
+				"sed -i \"s|\\${RUNNER_ID}|${RUNNER_ID}|g\" /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json",
 				"systemctl start amazon-cloudwatch-agent",
 				"./run.sh --jitconfig",
 				"tee /var/log/jit-runner-userdata.log",
