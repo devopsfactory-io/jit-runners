@@ -63,7 +63,9 @@ type SecretsReader interface {
 
 // Load reads config from environment variables and optionally Secrets Manager.
 //
-// Required env vars: GITHUB_APP_ID, SQS_QUEUE_URL, DYNAMODB_TABLE_NAME.
+// Required env vars: GITHUB_APP_ID, DYNAMODB_TABLE_NAME.
+// Optional env vars: SQS_QUEUE_URL (consumed by webhook + scaledown re-enqueue;
+// not used by the lifecycle handler — its absence must not crash that lambda).
 // Secrets: GITHUB_APP_WEBHOOK_SECRET_ARN / GITHUB_APP_WEBHOOK_SECRET,
 //
 //	GITHUB_APP_PRIVATE_KEY_SECRET_ARN / GITHUB_APP_PRIVATE_KEY.
@@ -121,9 +123,6 @@ func validateRequiredEnv(cfg *Config) error {
 	if cfg.AppID == "" {
 		return fmt.Errorf("GITHUB_APP_ID is required")
 	}
-	if cfg.QueueURL == "" {
-		return fmt.Errorf("SQS_QUEUE_URL is required")
-	}
 	if cfg.TableName == "" {
 		return fmt.Errorf("DYNAMODB_TABLE_NAME is required")
 	}
@@ -166,12 +165,12 @@ func loadSecrets(ctx context.Context, cfg *Config, client SecretsReader) error {
 		cfg.PrivateKey = os.Getenv("GITHUB_APP_PRIVATE_KEY")
 	}
 
-	if cfg.WebhookSecret == "" {
-		return fmt.Errorf("webhook secret is required (GITHUB_APP_WEBHOOK_SECRET or GITHUB_APP_WEBHOOK_SECRET_ARN)")
-	}
-	if cfg.PrivateKey == "" {
-		return fmt.Errorf("private key is required (GITHUB_APP_PRIVATE_KEY or GITHUB_APP_PRIVATE_KEY_SECRET_ARN)")
-	}
+	// Webhook secret and private key are validated by individual cmd handlers
+	// rather than at config load. The webhook lambda needs the WebhookSecret
+	// for HMAC verification; scaleup, scaledown, and lifecycle need the
+	// PrivateKey for installation-token minting; lifecycle does not need the
+	// WebhookSecret. Pushing the validation down to each cmd avoids crashing
+	// lambdas at startup over secrets they never use.
 	return nil
 }
 

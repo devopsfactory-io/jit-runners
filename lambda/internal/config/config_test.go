@@ -17,39 +17,16 @@ func TestLoad_RequiredFields(t *testing.T) {
 			errMsg: "GITHUB_APP_ID is required",
 		},
 		{
-			name: "missing SQS_QUEUE_URL",
+			name: "missing DYNAMODB_TABLE_NAME (SQS_QUEUE_URL is now optional)",
 			env: map[string]string{
 				"GITHUB_APP_ID": "12345",
-			},
-			errMsg: "SQS_QUEUE_URL is required",
-		},
-		{
-			name: "missing DYNAMODB_TABLE_NAME",
-			env: map[string]string{
-				"GITHUB_APP_ID": "12345",
-				"SQS_QUEUE_URL": "https://sqs.us-east-1.amazonaws.com/123/queue",
 			},
 			errMsg: "DYNAMODB_TABLE_NAME is required",
 		},
-		{
-			name: "missing webhook secret",
-			env: map[string]string{
-				"GITHUB_APP_ID":       "12345",
-				"SQS_QUEUE_URL":       "https://sqs.us-east-1.amazonaws.com/123/queue",
-				"DYNAMODB_TABLE_NAME": "runners",
-			},
-			errMsg: "webhook secret is required (GITHUB_APP_WEBHOOK_SECRET or GITHUB_APP_WEBHOOK_SECRET_ARN)",
-		},
-		{
-			name: "missing private key",
-			env: map[string]string{
-				"GITHUB_APP_ID":             "12345",
-				"SQS_QUEUE_URL":             "https://sqs.us-east-1.amazonaws.com/123/queue",
-				"DYNAMODB_TABLE_NAME":       "runners",
-				"GITHUB_APP_WEBHOOK_SECRET": "secret",
-			},
-			errMsg: "private key is required (GITHUB_APP_PRIVATE_KEY or GITHUB_APP_PRIVATE_KEY_SECRET_ARN)",
-		},
+		// Note: webhook secret and private key are no longer validated at config load.
+		// Each cmd handler validates the secrets it actually needs (webhook needs
+		// WebhookSecret; scaleup/scaledown/lifecycle need PrivateKey; lifecycle
+		// does not need WebhookSecret).
 	}
 
 	for _, tt := range tests {
