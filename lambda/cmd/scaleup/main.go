@@ -10,13 +10,16 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	awsec2sdk "github.com/aws/aws-sdk-go-v2/service/ec2"
+	awssdkssm "github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/google/uuid"
 
 	awsdynamo "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/dynamo"
 	awsec2 "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/ec2"
+	awsssm "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/ssm"
 	awssqs "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/sqs"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/compute"
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
@@ -32,6 +35,15 @@ var (
 	cfgOnce sync.Once
 	appCfg  *appconfig.Config
 	cfgErr  error
+
+	ssmLoaderOnce sync.Once
+	ssmLoaderRef  *awsssm.Loader
+)
+
+const (
+	runnerLogLevelParam   = "/jit-runners/runner-log-level"
+	runnerLogLevelDefault = "info"
+	ssmCacheTTL           = 30 * time.Second
 )
 
 func main() {
@@ -50,6 +62,8 @@ func handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 		return fmt.Errorf("load AWS config: %w", err)
 	}
 
+	ssmLoader := getSSMLoader(awsCfg)
+
 	launcher := awsec2.NewLauncher(awsec2sdk.NewFromConfig(awsCfg), awsec2.LauncherOptions{
 		SecurityGroupID:    cfg.SecurityGroupID,
 		IAMInstanceProfile: cfg.IAMInstanceProfile,
@@ -57,7 +71,7 @@ func handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 	store := awsdynamo.NewStore(dynamodb.NewFromConfig(awsCfg), cfg.TableName)
 
 	for _, record := range sqsEvent.Records {
-		if err := processRecord(ctx, cfg, launcher, store, record); err != nil {
+		if err := processRecord(ctx, cfg, launcher, store, ssmLoader, record); err != nil {
 			log.Printf("error processing record %s: %v", record.MessageId, err)
 			return err
 		}
@@ -65,7 +79,7 @@ func handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 	return nil
 }
 
-func processRecord(ctx context.Context, cfg *appconfig.Config, launcher compute.Launcher, store state.RunnerStore, record events.SQSMessage) error {
+func processRecord(ctx context.Context, cfg *appconfig.Config, launcher compute.Launcher, store state.RunnerStore, ssmLoader *awsssm.Loader, record events.SQSMessage) error {
 	msg, err := awssqs.ParseMessage(record.Body)
 	if err != nil {
 		log.Printf("parse SQS message: %v", err)
@@ -90,6 +104,8 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, launcher compute.
 		return fmt.Errorf("generate JIT config: %w", err)
 	}
 
+	runnerLogLevel, _ := ssmLoader.Get(ctx, runnerLogLevelParam, runnerLogLevelDefault)
+
 	// Persist a pending record keyed on the GitHub runner_id BEFORE
 	// launching the EC2 instance so scaledown's stale-pending sweep can
 	// reap orphans if scaleup itself dies between RunInstances and the
@@ -111,8 +127,10 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, launcher compute.
 		runnerVersion = defaultRunnerVersion
 	}
 	userData, err := awsec2.GenerateUserData(&awsec2.UserDataParams{
-		RunnerVersion: runnerVersion,
-		JITConfig:     jitCfg.EncodedJIT,
+		RunnerVersion:  runnerVersion,
+		JITConfig:      jitCfg.EncodedJIT,
+		RunnerID:       jitCfg.Runner.ID,
+		RunnerLogLevel: runnerLogLevel,
 	})
 	if err != nil {
 		markLaunchFailed(ctx, ghClient, store, msg, pending.ID, jitCfg.Runner.ID)
@@ -223,6 +241,13 @@ func loadConfig(ctx context.Context) (*appconfig.Config, error) {
 		appCfg, cfgErr = appconfig.Load(ctx)
 	})
 	return appCfg, cfgErr
+}
+
+func getSSMLoader(awsCfg aws.Config) *awsssm.Loader {
+	ssmLoaderOnce.Do(func() {
+		ssmLoaderRef = awsssm.New(awssdkssm.NewFromConfig(awsCfg), ssmCacheTTL)
+	})
+	return ssmLoaderRef
 }
 
 func init() {
