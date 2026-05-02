@@ -68,10 +68,13 @@ fi
 # The agent's log_stream_name does NOT auto-expand shell env vars (only
 # its own placeholders like {instance_id}); substitute ${RUNNER_ID} into
 # the config file at runtime so the stream resolves to <runner_id>/<instance_id>.
-echo "=== jit-runners: starting CloudWatch agent ==="
+# Use systemctl restart (not start) because the AMI's systemctl-enable
+# causes the agent to auto-start at boot BEFORE this userdata runs —
+# restart forces a config reload after the sed substitution.
+echo "=== jit-runners: restarting CloudWatch agent with substituted config ==="
 sed -i "s|\${RUNNER_ID}|${RUNNER_ID}|g" /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
-if ! systemctl start amazon-cloudwatch-agent; then
-    echo "WARN: amazon-cloudwatch-agent failed to start; continuing without remote logs"
+if ! systemctl restart amazon-cloudwatch-agent; then
+    echo "WARN: amazon-cloudwatch-agent failed to restart; continuing without remote logs"
 fi
 
 # Start the runner with JIT config (runs one job, then exits).
