@@ -13,7 +13,12 @@ resource "aws_lambda_function" "rebalancer" {
   memory_size   = 256
   timeout       = 60
 
-  reserved_concurrent_executions = 1
+  # reserved_concurrent_executions = 1 omitted — the deploy account currently
+  # has the default Lambda concurrency floor (10), so any reservation rejects
+  # with "decreases UnreservedConcurrentExecutions below minimum". Re-add
+  # once the account quota is raised. Risk while omitted: if a cycle takes
+  # >60s, two concurrent ticks could double-publish; bounded cost — redundant
+  # runners get reaped by scaledown's stale sweep.
 
   s3_bucket = var.webhook_lambda_s3_bucket
   s3_key    = var.rebalancer_lambda_s3_key

@@ -585,7 +585,12 @@ Resources:
         - x86_64
       Timeout: 60
       MemorySize: 256
-      ReservedConcurrentExecutions: 1
+      # ReservedConcurrentExecutions: 1 omitted — the deploy account currently
+      # has the default Lambda concurrency floor (10), so any reservation
+      # rejects with "decreases UnreservedConcurrentExecutions below minimum".
+      # Re-add once the account quota is raised. Risk while omitted: if a
+      # cycle takes >60s, two concurrent ticks could double-publish; bounded
+      # cost — redundant runners get reaped by scaledown's stale sweep.
       Role: !GetAtt RebalancerLambdaRole.Arn
       Code:
         S3Bucket: !Ref LambdaS3Bucket
