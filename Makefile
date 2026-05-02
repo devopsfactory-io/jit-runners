@@ -15,15 +15,17 @@ lint: ## Run linters
 	cd lambda && golangci-lint run ./...
 
 lambda.build: ## Build Lambda binaries (named bootstrap for provided.al2023 runtime)
-	mkdir -p bin/webhook bin/scaleup bin/scaledown
+	mkdir -p bin/webhook bin/scaleup bin/scaledown bin/lifecycle
 	cd lambda && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../bin/webhook/bootstrap ./cmd/webhook
 	cd lambda && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../bin/scaleup/bootstrap ./cmd/scaleup
 	cd lambda && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../bin/scaledown/bootstrap ./cmd/scaledown
+	cd lambda && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../bin/lifecycle/bootstrap ./cmd/lifecycle
 
 lambda.zip: lambda.build ## Build Lambda zips (bootstrap at root for provided.al2023)
 	cd bin/webhook && zip -qj ../webhook.zip bootstrap
 	cd bin/scaleup && zip -qj ../scaleup.zip bootstrap
 	cd bin/scaledown && zip -qj ../scaledown.zip bootstrap
+	cd bin/lifecycle && zip -qj ../lifecycle.zip bootstrap
 
 lambda.test: ## Run Lambda tests with coverage
 	cd lambda && go test -coverprofile=coverage.out -covermode=atomic ./...
