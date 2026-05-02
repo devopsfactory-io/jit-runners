@@ -23,15 +23,41 @@ type mockDDB struct {
 	getOut      *dynamodb.GetItemOutput
 	scanOut     *dynamodb.ScanOutput
 	err         error
+	items       map[string]map[string]types.AttributeValue
 }
 
 func (m *mockDDB) PutItem(_ context.Context, in *dynamodb.PutItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
 	m.putInput = in
+	if m.items != nil {
+		key := ""
+		if v, ok := in.Item["runner_id"]; ok {
+			if sv, ok := v.(*types.AttributeValueMemberS); ok {
+				key = sv.Value
+			}
+		}
+		if key != "" {
+			m.items[key] = in.Item
+		}
+	}
 	return &dynamodb.PutItemOutput{}, m.err
 }
 
 func (m *mockDDB) GetItem(_ context.Context, in *dynamodb.GetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
 	m.getInput = in
+	if m.items != nil {
+		key := ""
+		if v, ok := in.Key["runner_id"]; ok {
+			if sv, ok := v.(*types.AttributeValueMemberS); ok {
+				key = sv.Value
+			}
+		}
+		if key != "" {
+			if item, found := m.items[key]; found {
+				return &dynamodb.GetItemOutput{Item: item}, m.err
+			}
+		}
+		return &dynamodb.GetItemOutput{}, m.err
+	}
 	if m.getOut != nil {
 		return m.getOut, m.err
 	}
@@ -217,6 +243,40 @@ func TestStore_Delete(t *testing.T) {
 	}
 	if mock.deleteInput == nil {
 		t.Fatal("DeleteItem was not called")
+	}
+}
+
+func TestStore_Put_RoundTripsJobIDAndWorkflowRunID(t *testing.T) {
+	ddb := &mockDDB{items: map[string]map[string]types.AttributeValue{}}
+	store := NewStore(ddb, "test-table")
+	ctx := context.Background()
+
+	r := state.Runner{
+		ID:             "12345",
+		InstanceID:     "i-abc",
+		Repository:     "owner/repo",
+		Labels:         []string{"self-hosted", "large"},
+		Status:         state.StatusPending,
+		LaunchedAt:     time.Unix(1700000000, 0).UTC(),
+		UpdatedAt:      time.Unix(1700000000, 0).UTC(),
+		TTL:            time.Unix(1700086400, 0).UTC(),
+		GitHubRunnerID: 12345,
+		JobID:          678,
+		WorkflowRunID:  9012,
+	}
+
+	if err := store.Put(ctx, r); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	got, err := store.Get(ctx, "12345")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.JobID != 678 {
+		t.Errorf("JobID = %d, want 678", got.JobID)
+	}
+	if got.WorkflowRunID != 9012 {
+		t.Errorf("WorkflowRunID = %d, want 9012", got.WorkflowRunID)
 	}
 }
 
