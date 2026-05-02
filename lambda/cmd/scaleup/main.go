@@ -31,6 +31,12 @@ import (
 
 const defaultRunnerVersion = "2.332.0"
 
+// queueLister abstracts the listing call for testability. Production code
+// passes *github.Client which satisfies this interface.
+type queueLister interface {
+	ListQueuedWorkflowJobs(ctx context.Context, ownerRepo string) ([]github.QueuedJob, error)
+}
+
 var (
 	cfgOnce sync.Once
 	appCfg  *appconfig.Config
@@ -97,6 +103,17 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, launcher compute.
 	// name is purely cosmetic per GitHub's JIT contract — we use a UUID so
 	// no future reader assumes a binding to job_id or workflow_run_id.
 	ghClient := github.NewClient(token)
+
+	launch, err := shouldLaunch(ctx, ghClient, store, msg)
+	if err != nil {
+		return fmt.Errorf("scaleup decision: %w", err)
+	}
+	if !launch {
+		log.Printf("scaleup: skip %s job=%d labels=%v: demand <= supply (Source=%q)",
+			msg.RepositoryFull, msg.JobID, msg.Labels, msg.Source)
+		return nil
+	}
+
 	runnerName := "jit-" + uuid.NewString()
 	customLabels := webhook.CustomLabels(msg.Labels)
 	jitCfg, err := ghClient.GenerateJITConfig(ctx, msg.RepositoryFull, runnerName, msg.Labels)
@@ -238,6 +255,46 @@ func resolveAMI(cfg *appconfig.Config, labels []string) string {
 		}
 	}
 	return cfg.DefaultAMI
+}
+
+// shouldLaunch decides whether to proceed with the launch pipeline for a
+// given ScaleUpMessage. Returns true if the message's Source warrants an
+// unconditional launch (rebalancer) or if the webhook-path demand check
+// passes (queued matching jobs > pending matching runners).
+//
+// "Matching" uses subset semantics: a pending runner whose labels are a
+// superset of the queued job's labels is considered supply.
+//
+// On the webhook path, an empty Source is treated as SourceWebhook for
+// backwards compat with in-flight messages at deploy time.
+func shouldLaunch(ctx context.Context, gh queueLister, store state.RunnerStore, msg *awssqs.ScaleUpMessage) (bool, error) {
+	if msg.Source == awssqs.SourceRebalancer {
+		return true, nil
+	}
+
+	queued, err := gh.ListQueuedWorkflowJobs(ctx, msg.RepositoryFull)
+	if err != nil {
+		return false, fmt.Errorf("scaleup: list queued jobs: %w", err)
+	}
+	demand := 0
+	for _, j := range queued {
+		if state.MatchesLabels(msg.Labels, j.Labels) {
+			demand++
+		}
+	}
+
+	pending, err := store.List(ctx, state.Filter{StatusEq: state.StatusPending})
+	if err != nil {
+		return false, fmt.Errorf("scaleup: list pending runners: %w", err)
+	}
+	supply := 0
+	for _, r := range pending {
+		if state.MatchesLabels(r.Labels, msg.Labels) {
+			supply++
+		}
+	}
+
+	return demand > supply, nil
 }
 
 func loadConfig(ctx context.Context) (*appconfig.Config, error) {
