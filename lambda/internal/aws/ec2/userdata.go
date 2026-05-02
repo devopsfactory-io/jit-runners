@@ -65,8 +65,11 @@ fi
 
 # Start the CloudWatch agent so runner-agent _diag/* logs and this script's
 # stdout (via tee) ship to CloudWatch even if run.sh exits within seconds.
-# RUNNER_ID is read by the baked config at /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json.
+# The agent's log_stream_name does NOT auto-expand shell env vars (only
+# its own placeholders like {instance_id}); substitute ${RUNNER_ID} into
+# the config file at runtime so the stream resolves to <runner_id>/<instance_id>.
 echo "=== jit-runners: starting CloudWatch agent ==="
+sed -i "s|\${RUNNER_ID}|${RUNNER_ID}|g" /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
 if ! systemctl start amazon-cloudwatch-agent; then
     echo "WARN: amazon-cloudwatch-agent failed to start; continuing without remote logs"
 fi
