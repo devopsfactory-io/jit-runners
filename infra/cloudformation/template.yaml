@@ -6,6 +6,10 @@ Parameters:
     Type: String
     Description: GitHub App ID (numeric).
 
+  RepositoryFull:
+    Type: String
+    Description: GitHub repository in "owner/repo" form. Used by the rebalancer Lambda to query queued workflow_jobs.
+
   GitHubInstallationId:
     Type: String
     Description: GitHub App installation ID (numeric) used by lifecycle and scaledown for installation-token minting.
@@ -29,6 +33,10 @@ Parameters:
   LifecycleLambdaS3Key:
     Type: String
     Description: S3 key for the lifecycle Lambda zip.
+
+  RebalancerLambdaS3Key:
+    Type: String
+    Description: S3 key for the rebalancer Lambda zip (e.g. v1.0.0-rc.4/rebalancer.zip).
 
   WebhookSecretArn:
     Type: String
@@ -508,6 +516,39 @@ Resources:
                 Action: secretsmanager:GetSecretValue
                 Resource: !Ref PrivateKeySecretArn
 
+  RebalancerLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-rebalancer-lambda"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: RebalancerLambdaPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt ScaleUpQueue.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                Resource: !GetAtt RunnersTable.Arn
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref WebhookSecretArn
+                  - !Ref PrivateKeySecretArn
+
   LifecycleFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -536,6 +577,57 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-lifecycle"
       RetentionInDays: 14
+
+  RebalancerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-rebalancer"
+      Description: Periodic re-publisher of ScaleUpMessages to drain stranded queued GitHub Actions jobs.
+      Runtime: provided.al2023
+      Handler: bootstrap
+      Architectures:
+        - x86_64
+      Timeout: 60
+      MemorySize: 256
+      ReservedConcurrentExecutions: 1
+      Role: !GetAtt RebalancerLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref RebalancerLambdaS3Key
+      Environment:
+        Variables:
+          GITHUB_APP_ID: !Ref GitHubAppId
+          GITHUB_INSTALLATION_ID: !Ref GitHubInstallationId
+          GITHUB_APP_PRIVATE_KEY_SECRET_ARN: !Ref PrivateKeySecretArn
+          GITHUB_APP_WEBHOOK_SECRET_ARN: !Ref WebhookSecretArn
+          DYNAMODB_TABLE_NAME: !Ref RunnersTable
+          SQS_QUEUE_URL: !Ref ScaleUpQueue
+          REPOSITORY_FULL: !Ref RepositoryFull
+
+  RebalancerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-rebalancer"
+      RetentionInDays: 14
+
+  RebalancerSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${AWS::StackName}-rebalancer-schedule"
+      Description: Fires the rebalancer Lambda every 1 minute to drain stranded queued jobs.
+      ScheduleExpression: rate(1 minute)
+      State: ENABLED
+      Targets:
+        - Id: RebalancerTarget
+          Arn: !GetAtt RebalancerFunction.Arn
+
+  RebalancerSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref RebalancerFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RebalancerSchedule.Arn
 
   LifecycleFunctionEventSource:
     Type: AWS::Lambda::EventSourceMapping
