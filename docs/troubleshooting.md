@@ -525,5 +525,38 @@ aws sqs send-message \
   --region us-east-2
 ```
 
-The scaleup function's idempotency guard (`Status == StatusRunning` → skip)
-ensures this is safe even if the original runner did register.
+Under the runner_id identity model (issue #52), each scaleup invocation registers a fresh JIT runner with a unique `runner_id` and launches a new EC2 instance — there is no `(repo, job_id)`-keyed idempotency check that could short-circuit a manual re-enqueue. If the prior runner is still alive when you re-enqueue, scaledown's `Scan`-based stale-runner sweep reaps the abandoned instance after `StaleThresholdMinutes`. This is generally what you want for a manual reset.
+
+## How runners bind to jobs
+
+This subsection documents what GitHub actually guarantees about JIT runner-to-job binding, so future maintainers do not re-make the assumption that produced issue #52.
+
+### What GitHub guarantees
+
+The endpoint `POST /repos/{owner}/{repo}/actions/runners/generate-jitconfig` accepts only:
+
+- `name` — a cosmetic identifier (any string, no semantic binding).
+- `runner_group_id` — group membership.
+- `labels` — array of labels the runner advertises.
+- `work_folder` — optional working directory hint for the runner agent.
+
+There is **no** `job_id` parameter and **no** `workflow_run_id` parameter. The endpoint guarantees: *"when a runner registers using this API it will only be allowed to run a single job before being automatically removed from the repository, organization, or enterprise."*
+
+That single job is **whichever queued job whose labels match first** — not job-locked, not workflow_run-locked.
+
+### What this means for jit-runners
+
+- Each `workflow_job=queued` event triggers one `generate-jitconfig` call and one EC2 spot launch. GitHub returns a unique int64 `runner_id` per call.
+- DynamoDB records are keyed on the stringified `runner_id` (the only stable identifier post-registration). `job_id` and `workflow_run_id` are stored as observability metadata only.
+- When a runner comes online, GitHub assigns it one of the queued matching jobs **non-deterministically**. The runner whose name happens to encode `job_id=A` may execute `job_id=B`. Total job count drains, but pairing is set-level, not name-level.
+- Lifecycle webhooks (`workflow_job=in_progress`, `workflow_job=completed`) carry the `runner_id` of the runner that actually executed the job. Because we key DDB on `runner_id`, every webhook resolves its own record exactly once.
+
+### Why the runner name is `jit-<uuidv4>`
+
+The previous form `jit-<job_id>` implied a binding GitHub does not enforce. Future readers must not assume the trailing component of a JIT runner name is meaningful. A UUID is opaque by construction.
+
+### References
+
+- [REST API: self-hosted runners](https://docs.github.com/en/rest/actions/self-hosted-runners) — `generate-jitconfig` request body.
+- [GitHub Changelog: Just-in-time self-hosted runners (2023-06-02)](https://github.blog/changelog/2023-06-02-github-actions-just-in-time-self-hosted-runners/).
+- Issue [devopsfactory-io/jit-runners#52](https://github.com/devopsfactory-io/jit-runners/issues/52) and the design spec at `repositories/zettelkasten/Projects/jit-runners/specs/2026-05-02-runner-id-realignment-design.md`.
