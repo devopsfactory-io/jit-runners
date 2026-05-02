@@ -65,22 +65,6 @@ type dbRecord struct {
 	LastAttemptAt     int64    `dynamodbav:"last_attempt_at,omitempty"`
 }
 
-// JobID returns the trailing numeric component of a runner ID encoded as
-// "<repository>#<jobID>". Returns 0 when the ID is malformed; this is best
-// effort because JobID is denormalized into the record purely for queryable
-// joins, not as a source of truth.
-func parseJobID(id string) int64 {
-	idx := strings.LastIndex(id, "#")
-	if idx < 0 || idx == len(id)-1 {
-		return 0
-	}
-	n, err := strconv.ParseInt(id[idx+1:], 10, 64)
-	if err != nil {
-		return 0
-	}
-	return n
-}
-
 func toDB(r state.Runner) dbRecord {
 	createdAt := r.LaunchedAt
 	if createdAt.IsZero() {
@@ -101,7 +85,8 @@ func toDB(r state.Runner) dbRecord {
 	return dbRecord{
 		RunnerID:          r.ID,
 		InstanceID:        r.InstanceID,
-		JobID:             parseJobID(r.ID),
+		JobID:             r.JobID,
+		RunID:             r.WorkflowRunID,
 		Repository:        r.Repository,
 		Labels:            r.Labels,
 		Status:            r.Status,
@@ -129,6 +114,8 @@ func fromDB(d dbRecord) state.Runner {
 		UpdatedAt:         time.Unix(d.UpdatedAt, 0).UTC(),
 		TTL:               time.Unix(d.TTL, 0).UTC(),
 		GitHubRunnerID:    d.GitHubRunnerID,
+		JobID:             d.JobID,
+		WorkflowRunID:     d.RunID,
 		ReEnqueueAttempts: d.ReEnqueueAttempts,
 		LastAttemptAt:     lastAttempt,
 	}
