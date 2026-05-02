@@ -629,3 +629,55 @@ To exercise the silent-failure path on demand without a real workload:
 1. Generate a JIT config: `gh api -X POST repos/<owner>/<repo>/actions/runners/generate-jitconfig -f name=test -f labels[]=self-hosted -F runner_group_id=1`. Capture the `runner.id`.
 2. Immediately revoke it: `gh api -X DELETE repos/<owner>/<repo>/actions/runners/<runner.id>`.
 3. Send a synthetic SQS message to the scaleup queue carrying the revoked `encoded_jit_config`. A new spot instance launches, registers nothing, exits, and emits `JIT_NO_JOB_PICKUP`.
+
+## Stranded queued jobs
+
+A "stranded queued job" is a workflow_job stuck in `queued` status indefinitely. Pre-issue #62, this happened because GitHub's matcher pairs runners with any queued matching job (often older stranded ones, not the specific job whose `queued` event triggered the runner's launch). The rebalancer Lambda closes this gap by periodically re-publishing `ScaleUpMessage`s for any queue depth not covered by pending runners.
+
+### Quick check: is the rebalancer healthy?
+
+```bash
+aws logs tail /aws/lambda/jit-runners-rebalancer --since 10m --filter-pattern '"cycle complete"' --format short
+```
+
+Expected: a `cycle complete demand=N supply=M published=K label_sets=L` line every minute. `published=K` should be 0 most of the time and non-zero only when there's actual drift to recover.
+
+### Find currently stranded jobs (operator triage)
+
+```bash
+gh api repos/devopsfactory-io/jit-runners/actions/runs?status=queued --jq '.workflow_runs[] | "\(.id)  \(.name)  \(.created_at)"'
+```
+
+For each queued run, list its queued jobs:
+
+```bash
+gh api repos/devopsfactory-io/jit-runners/actions/runs/<RUN_ID>/jobs --jq '.jobs[] | select(.status == "queued") | "  \(.id)  \(.name)  labels=\(.labels)"'
+```
+
+If the rebalancer is healthy and there are still stranded jobs older than ~5 minutes, escalate.
+
+### Verify scaleup is making demand-aware decisions
+
+```bash
+aws logs tail /aws/lambda/jit-runners-scaleup --since 10m --filter-pattern '"scaleup: skip"' --format short
+```
+
+A small number of skips per CI cycle is normal — they mean the webhook path correctly decided not to over-launch. A large number (every webhook skipping) suggests supply is already saturated; check whether legitimate demand is being met.
+
+### Manually fire a rebalance
+
+```bash
+aws lambda invoke --function-name jit-runners-rebalancer --invocation-type RequestResponse /tmp/rebalancer-out.json
+cat /tmp/rebalancer-out.json
+```
+
+Useful when investigating stranded jobs and you don't want to wait for the next 1-minute cycle.
+
+### Tuning the cadence
+
+If drift recovery feels too slow, the cadence can be tightened (subject to AWS::Events::Rule's `rate(1 minute)` minimum). Going below 1 minute requires `AWS::Scheduler::Schedule` (newer EventBridge Scheduler service); see issue #62 for the trade-off discussion.
+
+### References
+
+- Issue [#62](https://github.com/devopsfactory-io/jit-runners/issues/62) — diagnosis and design.
+- Spec: `repositories/zettelkasten/Projects/jit-runners/specs/2026-05-02-effective-scaleup-design.md`.

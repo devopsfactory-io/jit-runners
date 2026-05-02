@@ -202,6 +202,9 @@ func TestCleaner_StalePending_UnderBudget(t *testing.T) {
 	if pub.msgs[0].JobID != 1 || pub.msgs[0].RepositoryFull != rec.Repository {
 		t.Errorf("republished message body mismatch: %+v", pub.msgs[0])
 	}
+	if pub.msgs[0].Source != awssqs.SourceWebhook {
+		t.Errorf("re-enqueue Source = %q, want %q", pub.msgs[0].Source, awssqs.SourceWebhook)
+	}
 	if len(store.updates) != 1 {
 		t.Fatalf("expected 1 store update, got %d", len(store.updates))
 	}

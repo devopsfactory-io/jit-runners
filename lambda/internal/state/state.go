@@ -67,3 +67,35 @@ type RunnerStore interface {
 	Update(ctx context.Context, id string, fields RunnerUpdate) error
 	Delete(ctx context.Context, id string) error
 }
+
+// MatchesLabels reports whether a runner with `runnerLabels` can satisfy a
+// job with `jobLabels`. GitHub's matcher uses subset semantics: a runner
+// matches a job iff every job label is present in the runner's label set.
+// The compare is case-insensitive and order-insensitive.
+//
+// Used by both cmd/scaleup (to count matching pending runners as supply)
+// and internal/rebalancer (to compute per-label-set supply).
+func MatchesLabels(runnerLabels, jobLabels []string) bool {
+	have := make(map[string]struct{}, len(runnerLabels))
+	for _, l := range runnerLabels {
+		have[normalizeLabel(l)] = struct{}{}
+	}
+	for _, l := range jobLabels {
+		if _, ok := have[normalizeLabel(l)]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeLabel(s string) string {
+	out := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		out[i] = c
+	}
+	return string(out)
+}

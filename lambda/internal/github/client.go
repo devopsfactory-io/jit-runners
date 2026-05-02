@@ -111,6 +111,26 @@ type JITRunner struct {
 	Name string `json:"name"`
 }
 
+// QueuedJob is a workflow_job in queued state, returned by
+// ListQueuedWorkflowJobs. Used by the rebalancer Lambda to compute demand
+// and by cmd/scaleup for the demand-aware decision.
+type QueuedJob struct {
+	JobID  int64    `json:"id"`
+	RunID  int64    `json:"run_id"`
+	Status string   `json:"status"`
+	Labels []string `json:"labels"`
+}
+
+type listRunsResponse struct {
+	WorkflowRuns []struct {
+		ID int64 `json:"id"`
+	} `json:"workflow_runs"`
+}
+
+type listJobsResponse struct {
+	Jobs []QueuedJob `json:"jobs"`
+}
+
 // GenerateJITConfig requests a just-in-time runner configuration from GitHub.
 // This creates a single-use runner that auto-deregisters after one job.
 func (c *Client) GenerateJITConfig(ctx context.Context, ownerRepo string, name string, labels []string) (*JITRunnerConfig, error) {
@@ -185,4 +205,80 @@ func (c *Client) DeregisterRunner(ctx context.Context, ownerRepo string, runnerI
 		return nil
 	}
 	return fmt.Errorf("github: DeregisterRunner %d: status %d", runnerID, resp.StatusCode)
+}
+
+// ListQueuedWorkflowJobs returns all workflow_jobs currently in `queued`
+// status across the repo. Implementation: list workflow runs filtered to
+// status=queued, then per-run list jobs and filter to status=queued.
+// Pagination is requested at per_page=100 (workflows seldom exceed 100
+// queued jobs at once; if needed, callers iterate via the periodic
+// rebalancer cycle which re-queries each minute).
+func (c *Client) ListQueuedWorkflowJobs(ctx context.Context, ownerRepo string) ([]QueuedJob, error) {
+	runs, err := c.listQueuedRuns(ctx, ownerRepo)
+	if err != nil {
+		return nil, err
+	}
+	var queued []QueuedJob
+	for _, run := range runs {
+		jobs, err := c.listJobsForRun(ctx, ownerRepo, run.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, j := range jobs {
+			if j.Status == "queued" {
+				queued = append(queued, j)
+			}
+		}
+	}
+	return queued, nil
+}
+
+func (c *Client) listQueuedRuns(ctx context.Context, ownerRepo string) ([]struct {
+	ID int64 `json:"id"`
+}, error) {
+	url := fmt.Sprintf("%s/repos/%s/actions/runs?status=queued&per_page=100", c.baseURL, ownerRepo)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704
+	if err != nil {
+		return nil, fmt.Errorf("github: list queued runs: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("github: list queued runs: status %d", resp.StatusCode)
+	}
+	var body listRunsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("github: list queued runs decode: %w", err)
+	}
+	return body.WorkflowRuns, nil
+}
+
+func (c *Client) listJobsForRun(ctx context.Context, ownerRepo string, runID int64) ([]QueuedJob, error) {
+	url := fmt.Sprintf("%s/repos/%s/actions/runs/%d/jobs?per_page=100", c.baseURL, ownerRepo, runID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704
+	if err != nil {
+		return nil, fmt.Errorf("github: list jobs for run %d: %w", runID, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("github: list jobs for run %d: status %d", runID, resp.StatusCode)
+	}
+	var body listJobsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("github: list jobs for run %d decode: %w", runID, err)
+	}
+	return body.Jobs, nil
 }

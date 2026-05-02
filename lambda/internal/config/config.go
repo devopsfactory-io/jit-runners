@@ -34,6 +34,12 @@ type Config struct {
 	// the installation from the SQS message payload directly.
 	InstallationID int64
 
+	// RepositoryFull is the GitHub repository in "owner/repo" form.
+	// Used by the rebalancer Lambda to query queued workflow_jobs.
+	// Required when the rebalancer Lambda is deployed (set via the
+	// REPOSITORY_FULL env var).
+	RepositoryFull string
+
 	// SQS queue URL for scale-up messages.
 	QueueURL string
 
@@ -84,6 +90,7 @@ func LoadWith(ctx context.Context, loader secrets.Loader) (*Config, error) {
 		SecurityGroupID:    os.Getenv("EC2_SECURITY_GROUP_ID"),
 		IAMInstanceProfile: os.Getenv("EC2_IAM_INSTANCE_PROFILE"),
 		DefaultAMI:         os.Getenv("EC2_DEFAULT_AMI"),
+		RepositoryFull:     os.Getenv("REPOSITORY_FULL"),
 	}
 
 	if err := validateRequiredEnv(cfg); err != nil {

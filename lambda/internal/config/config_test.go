@@ -73,6 +73,7 @@ func TestLoad_Success(t *testing.T) {
 	t.Setenv("GITHUB_APP_PRIVATE_KEY", "my-private-key")
 	t.Setenv("EC2_SUBNET_IDS", "subnet-1,subnet-2")
 	t.Setenv("LABEL_MAPPINGS", `[{"label":"gpu","instance_type":"g4dn.xlarge"}]`)
+	t.Setenv("REPOSITORY_FULL", "owner/repo")
 
 	cfg, err := Load(context.Background())
 	if err != nil {
@@ -96,6 +97,9 @@ func TestLoad_Success(t *testing.T) {
 	}
 	if cfg.InstallationID != 0 {
 		t.Errorf("InstallationID = %d, want 0 (unset)", cfg.InstallationID)
+	}
+	if cfg.RepositoryFull != "owner/repo" {
+		t.Errorf("RepositoryFull = %q, want %q", cfg.RepositoryFull, "owner/repo")
 	}
 }
 
@@ -168,6 +172,7 @@ func clearEnv(t *testing.T) {
 		"GITHUB_INSTALLATION_ID",
 		"EC2_SUBNET_IDS", "EC2_SECURITY_GROUP_ID", "EC2_IAM_INSTANCE_PROFILE",
 		"EC2_DEFAULT_AMI", "LABEL_MAPPINGS",
+		"REPOSITORY_FULL",
 	}
 	for _, k := range envVars {
 		t.Setenv(k, "")
