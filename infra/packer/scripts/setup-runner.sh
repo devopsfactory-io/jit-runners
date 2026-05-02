@@ -24,6 +24,7 @@ for script in \
   "${SCRIPT_DIR}/03-languages.sh" \
   "${SCRIPT_DIR}/04-cloud-tools.sh" \
   "${SCRIPT_DIR}/05-cli-tools.sh" \
+  "${SCRIPT_DIR}/08-cloudwatch-agent.sh" \
   "${SCRIPT_DIR}/07-cleanup.sh"; do
 
   echo ""
