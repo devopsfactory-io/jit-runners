@@ -19,6 +19,13 @@ const (
 var ErrNotFound = errors.New("state: runner not found")
 
 // Runner is the persisted state for a runner managed by jit-runners.
+//
+// ID is the stringified GitHub runner_id returned by
+// generate-jitconfig — the only stable identifier post-registration.
+// Lookups across packages key on this value (see internal/lifecycle
+// and cmd/scaleup). JobID and WorkflowRunID are observability
+// metadata derived from the queue-trigger workflow_job webhook;
+// they are NEVER lookup keys.
 type Runner struct {
 	ID                string
 	InstanceID        string
@@ -29,6 +36,8 @@ type Runner struct {
 	UpdatedAt         time.Time
 	TTL               time.Time
 	GitHubRunnerID    int64
+	JobID             int64
+	WorkflowRunID     int64
 	ReEnqueueAttempts int
 	LastAttemptAt     time.Time
 }

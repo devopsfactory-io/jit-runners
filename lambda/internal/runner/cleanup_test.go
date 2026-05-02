@@ -104,7 +104,7 @@ func fixedNow(t time.Time) func() time.Time { return func() time.Time { return t
 // the cutoff (StaleAfter=10m, so 2h ago is unambiguous).
 func stalePending(now time.Time, attempts int) state.Runner {
 	return state.Runner{
-		ID:                "owner/repo#1",
+		ID:                "99",
 		InstanceID:        "i-pending",
 		Repository:        "owner/repo",
 		Labels:            []string{"self-hosted", "linux"},
@@ -113,6 +113,7 @@ func stalePending(now time.Time, attempts int) state.Runner {
 		UpdatedAt:         now.Add(-2 * time.Hour),
 		TTL:               now.Add(24 * time.Hour),
 		GitHubRunnerID:    99,
+		JobID:             1,
 		ReEnqueueAttempts: attempts,
 	}
 }
@@ -121,7 +122,7 @@ func stalePending(now time.Time, attempts int) state.Runner {
 // MaxAge (default 6h, so 12h ago is unambiguous).
 func staleRunning(now time.Time, attempts int) state.Runner {
 	return state.Runner{
-		ID:                "owner/repo#2",
+		ID:                "77",
 		InstanceID:        "i-running",
 		Repository:        "owner/repo",
 		Labels:            []string{"self-hosted", "linux"},
@@ -130,6 +131,7 @@ func staleRunning(now time.Time, attempts int) state.Runner {
 		UpdatedAt:         now.Add(-12 * time.Hour),
 		TTL:               now.Add(24 * time.Hour),
 		GitHubRunnerID:    77,
+		JobID:             2,
 		ReEnqueueAttempts: attempts,
 	}
 }
@@ -450,17 +452,17 @@ func TestCleaner_MultipleRecords_Aggregates(t *testing.T) {
 
 	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
 	under := stalePending(now, 0)
-	under.ID = "owner/repo#1"
+	under.ID = "91"
 	under.GitHubRunnerID = 91
 	under.InstanceID = "i-under"
 
 	at := stalePending(now, 2)
-	at.ID = "owner/repo#2"
+	at.ID = "92"
 	at.GitHubRunnerID = 92
 	at.InstanceID = "i-at"
 
 	exhausted := stalePending(now, 3)
-	exhausted.ID = "owner/repo#3"
+	exhausted.ID = "93"
 	exhausted.GitHubRunnerID = 93
 	exhausted.InstanceID = "i-exhausted"
 

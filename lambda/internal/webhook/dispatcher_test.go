@@ -303,3 +303,46 @@ func TestHandler_Handle_QueuedNonSelfHostedNoPublish(t *testing.T) {
 		t.Errorf("expected no publishes; scaleUp=%d lifecycle=%d", scaleUp.calls, lifeP.calls)
 	}
 }
+
+func TestHandler_Handle_LifecyclePlumbsRunnerID(t *testing.T) {
+	// Synthetic in_progress workflow_job event with runner_id populated.
+	// The dispatcher must publish a lifecycle.Message whose RunnerID
+	// matches the event payload — this guards against accidental drops
+	// of the field during refactors (see issue #52).
+	body := []byte(`{
+		"action": "in_progress",
+		"workflow_job": {
+			"id": 1234,
+			"run_id": 5678,
+			"labels": ["self-hosted","large"],
+			"runner_name": "jit-abc",
+			"runner_id": 99887766,
+			"status": "in_progress"
+		},
+		"repository": {"id": 1, "full_name": "owner/repo", "private": false},
+		"installation": {"id": 42}
+	}`)
+
+	h, _, lifeP := newTestHandler()
+	resp := h.Handle(context.Background(), "workflow_job", sign(body), body)
+	if resp.Status != 202 {
+		t.Fatalf("status = %d, want 202; body=%q", resp.Status, resp.Body)
+	}
+	if lifeP.calls != 1 {
+		t.Fatalf("lifecycle.calls = %d, want 1", lifeP.calls)
+	}
+
+	var got lifecycle.Message
+	if err := json.Unmarshal(lifeP.rawBody, &got); err != nil {
+		t.Fatalf("unmarshal published lifecycle msg: %v", err)
+	}
+	if got.RunnerID != 99887766 {
+		t.Errorf("RunnerID = %d, want 99887766", got.RunnerID)
+	}
+	if got.JobID != 1234 {
+		t.Errorf("JobID = %d, want 1234", got.JobID)
+	}
+	if got.Repo != "owner/repo" {
+		t.Errorf("Repo = %q, want owner/repo", got.Repo)
+	}
+}
