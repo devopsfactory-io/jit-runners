@@ -46,10 +46,6 @@ func handler(ctx context.Context) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	if cfg.RepositoryFull == "" {
-		return fmt.Errorf("rebalancer: REPOSITORY_FULL env var is required")
-	}
-
 	awsCfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return fmt.Errorf("load AWS config: %w", err)
@@ -63,12 +59,22 @@ func handler(ctx context.Context) error {
 		return fmt.Errorf("github client: %w", err)
 	}
 
-	if err := rebalancer.Rebalance(ctx, ghClient, store, publisher, cfg.RepositoryFull, cfg.InstallationID); err != nil {
-		log.Printf("rebalancer: cycle error: %v", err)
+	repos, err := ghClient.ListInstallationRepositories(ctx)
+	if err != nil {
+		log.Printf("rebalancer: list installation repositories: %v", err)
 		// Return nil so EventBridge does not retry-storm. Next cycle (1 min)
-		// re-attempts with a fresh rate budget.
+		// re-attempts.
 		return nil
 	}
+
+	var errCount int
+	for _, repo := range repos {
+		if err := rebalancer.Rebalance(ctx, ghClient, store, publisher, repo, cfg.InstallationID); err != nil {
+			log.Printf("rebalancer: cycle error repo=%s: %v", repo, err)
+			errCount++
+		}
+	}
+	log.Printf("rebalancer: tick complete repos=%d errors=%d", len(repos), errCount)
 	return nil
 }
 
