@@ -6,10 +6,6 @@ Parameters:
     Type: String
     Description: GitHub App ID (numeric).
 
-  RepositoryFull:
-    Type: String
-    Description: GitHub repository in "owner/repo" form. Used by the rebalancer Lambda to query queued workflow_jobs.
-
   GitHubInstallationId:
     Type: String
     Description: GitHub App installation ID (numeric) used by lifecycle and scaledown for installation-token minting.
@@ -602,7 +598,6 @@ Resources:
           GITHUB_APP_WEBHOOK_SECRET_ARN: !Ref WebhookSecretArn
           DYNAMODB_TABLE_NAME: !Ref RunnersTable
           SQS_QUEUE_URL: !Ref ScaleUpQueue
-          REPOSITORY_FULL: !Ref RepositoryFull
 
   RebalancerLogGroup:
     Type: AWS::Logs::LogGroup
