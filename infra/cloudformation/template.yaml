@@ -187,6 +187,20 @@ Resources:
                 Condition:
                   StringEquals:
                     "ec2:ResourceTag/managed-by": jit-runners
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource:
+                  - !GetAtt RunnerAgentLogGroup.Arn
+                  - !GetAtt RunnerUserdataLogGroup.Arn
+                  - !Sub "${RunnerAgentLogGroup.Arn}:log-stream:*"
+                  - !Sub "${RunnerUserdataLogGroup.Arn}:log-stream:*"
 
   RunnerInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -339,6 +353,13 @@ Resources:
                 Resource:
                   - !Ref WebhookSecretArn
                   - !Ref PrivateKeySecretArn
+        - PolicyName: SSMReadRunnerLogLevel
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/jit-runners/runner-log-level"
 
   ScaleUpFunction:
     Type: AWS::Lambda::Function
@@ -556,6 +577,44 @@ Resources:
       Target:
         Arn: !GetAtt ScaleDownFunction.Arn
         RoleArn: !GetAtt SchedulerRole.Arn
+
+  # --- Diagnostic logging (issue #55) ---
+
+  RunnerAgentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /jit-runners/runner-agent
+      RetentionInDays: 14
+
+  RunnerUserdataLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /jit-runners/userdata
+      RetentionInDays: 14
+
+  SilentFailureMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: RunnerUserdataLogGroup
+    Properties:
+      LogGroupName: /jit-runners/userdata
+      FilterPattern: "JIT_NO_JOB_PICKUP"
+      MetricTransformations:
+        - MetricName: SilentFailures
+          MetricNamespace: JitRunners/RunnerAgent
+          MetricValue: "1"
+          DefaultValue: 0
+
+  RunnerLogLevelParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /jit-runners/runner-log-level
+      Type: String
+      Value: info
+      AllowedPattern: "^(info|debug)$"
+      Description: |
+        Controls runner-agent verbosity. Set to "debug" while
+        investigating; flip back to "info" afterward. Read by the
+        scaleup Lambda on each invocation (30s in-process cache).
 
 Outputs:
   WebhookUrl:
