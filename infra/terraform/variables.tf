@@ -95,11 +95,6 @@ variable "rebalancer_lambda_s3_key" {
   description = "S3 key for the rebalancer Lambda zip (e.g. v1.0.0-rc.4/rebalancer.zip)."
 }
 
-variable "repository_full" {
-  type        = string
-  description = "GitHub repository in owner/repo form. Used by the rebalancer Lambda to query queued workflow_jobs."
-}
-
 # --- Scale-down ---
 
 variable "stale_threshold_minutes" {

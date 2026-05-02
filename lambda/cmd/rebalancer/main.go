@@ -13,6 +13,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -32,6 +33,14 @@ var (
 	cfgErr  error
 )
 
+// activityWindow scopes the rebalancer's per-cycle work to repos that
+// have at least one runner record launched in the past N. Drift recovery
+// requires that scaleup already attempted to launch (which writes a
+// record), so a repo with no recent record cannot have stranded queued
+// jobs in our system. 7 days is a generous default; tune via env later
+// if needed.
+const activityWindow = 7 * 24 * time.Hour
+
 func main() {
 	lambda.Start(handler)
 }
@@ -44,10 +53,6 @@ func handler(ctx context.Context) error {
 	cfg, err := loadConfig(ctx)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
-	}
-
-	if cfg.RepositoryFull == "" {
-		return fmt.Errorf("rebalancer: REPOSITORY_FULL env var is required")
 	}
 
 	awsCfg, err := config.LoadDefaultConfig(ctx)
@@ -63,12 +68,23 @@ func handler(ctx context.Context) error {
 		return fmt.Errorf("github client: %w", err)
 	}
 
-	if err := rebalancer.Rebalance(ctx, ghClient, store, publisher, cfg.RepositoryFull, cfg.InstallationID); err != nil {
-		log.Printf("rebalancer: cycle error: %v", err)
+	since := time.Now().Add(-activityWindow)
+	repos, err := store.ListActiveRepos(ctx, since)
+	if err != nil {
+		log.Printf("rebalancer: list active repos: %v", err)
 		// Return nil so EventBridge does not retry-storm. Next cycle (1 min)
-		// re-attempts with a fresh rate budget.
+		// re-attempts.
 		return nil
 	}
+
+	var errCount int
+	for _, repo := range repos {
+		if err := rebalancer.Rebalance(ctx, ghClient, store, publisher, repo, cfg.InstallationID); err != nil {
+			log.Printf("rebalancer: cycle error repo=%s: %v", repo, err)
+			errCount++
+		}
+	}
+	log.Printf("rebalancer: tick complete repos=%d errors=%d", len(repos), errCount)
 	return nil
 }
 

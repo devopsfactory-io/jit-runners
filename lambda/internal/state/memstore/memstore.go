@@ -101,3 +101,27 @@ func (s *Store) Delete(_ context.Context, id string) error {
 	delete(s.records, id)
 	return nil
 }
+
+// ListActiveRepos returns the deduped Repository values across runner records
+// launched at or after since. Records with an empty Repository are skipped.
+// Results are not sorted; callers that need a stable order must sort themselves.
+func (s *Store) ListActiveRepos(_ context.Context, since time.Time) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seen := make(map[string]struct{})
+	var repos []string
+	for _, r := range s.records {
+		if r.LaunchedAt.Before(since) {
+			continue
+		}
+		if r.Repository == "" {
+			continue
+		}
+		if _, dup := seen[r.Repository]; dup {
+			continue
+		}
+		seen[r.Repository] = struct{}{}
+		repos = append(repos, r.Repository)
+	}
+	return repos, nil
+}

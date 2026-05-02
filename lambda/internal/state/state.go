@@ -66,6 +66,12 @@ type RunnerStore interface {
 	List(ctx context.Context, f Filter) ([]Runner, error)
 	Update(ctx context.Context, id string, fields RunnerUpdate) error
 	Delete(ctx context.Context, id string) error
+	// ListActiveRepos returns the deduped Repository values across runner
+	// records launched at or after `since`. Used by the rebalancer Lambda
+	// to scope its per-cycle GitHub queue queries to repos that have
+	// recent webhook-driven activity. Implementations may scan or query
+	// the underlying store; results need not be sorted.
+	ListActiveRepos(ctx context.Context, since time.Time) ([]string, error)
 }
 
 // MatchesLabels reports whether a runner with `runnerLabels` can satisfy a

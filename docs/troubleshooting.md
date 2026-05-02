@@ -634,13 +634,15 @@ To exercise the silent-failure path on demand without a real workload:
 
 A "stranded queued job" is a workflow_job stuck in `queued` status indefinitely. Pre-issue #62, this happened because GitHub's matcher pairs runners with any queued matching job (often older stranded ones, not the specific job whose `queued` event triggered the runner's launch). The rebalancer Lambda closes this gap by periodically re-publishing `ScaleUpMessage`s for any queue depth not covered by pending runners.
 
+The rebalancer iterates over **repos with recent activity**: it scans the DynamoDB runner records and selects every repo whose latest record was launched in the past 7 days. A repo with no recent record cannot have stranded queued jobs in our system (the drift cycle requires that scaleup already attempted to launch, which writes a record). This bounds per-cycle GitHub API calls to ~1 per active repo, keeping us well under the installation rate limit even for orgs with hundreds of repos.
+
 ### Quick check: is the rebalancer healthy?
 
 ```bash
 aws logs tail /aws/lambda/jit-runners-rebalancer --since 10m --filter-pattern '"cycle complete"' --format short
 ```
 
-Expected: a `cycle complete demand=N supply=M published=K label_sets=L` line every minute. `published=K` should be 0 most of the time and non-zero only when there's actual drift to recover.
+Expected: per repo, a `cycle complete repo=<owner/repo> demand=N supply=M published=K label_sets=L` line, plus a single `tick complete repos=R errors=E` summary line, every minute. `published=K` should be 0 most of the time per repo and non-zero only when there's actual drift to recover. `errors=E` should normally be 0; non-zero means one or more repos hit a transient GitHub outage and the next tick will retry.
 
 ### Find currently stranded jobs (operator triage)
 
@@ -672,6 +674,8 @@ cat /tmp/rebalancer-out.json
 ```
 
 Useful when investigating stranded jobs and you don't want to wait for the next 1-minute cycle.
+
+One invocation rebalances every repo the App installation can access, not just one.
 
 ### Tuning the cadence
 
