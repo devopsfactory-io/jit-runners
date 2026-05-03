@@ -18,14 +18,21 @@ const (
 //     message — the rebalancer pre-counted the gap and publishes one
 //     message per missing slot.
 type ScaleUpMessage struct {
-	EventAction       string   `json:"event_action"`
-	JobID             int64    `json:"job_id"`
-	RunID             int64    `json:"run_id"`
-	RepositoryFull    string   `json:"repository_full"`
-	Labels            []string `json:"labels"`
-	InstallationID    int64    `json:"installation_id"`
-	Source            string   `json:"source,omitempty"`
-	ReEnqueueAttempts int      `json:"re_enqueue_attempts,omitempty"`
+	EventAction    string   `json:"event_action"`
+	JobID          int64    `json:"job_id"`
+	RunID          int64    `json:"run_id"`
+	RepositoryFull string   `json:"repository_full"`
+	Labels         []string `json:"labels"`
+	InstallationID int64    `json:"installation_id"`
+
+	// Source identifies which Lambda published this message. See the
+	// constants above. Empty Source is treated as SourceWebhook.
+	Source string `json:"source,omitempty"`
+
+	// ReEnqueueAttempts is incremented by scaledown each time a stuck pending
+	// runner triggers a re-enqueue. Scaleup uses it as a budget check (skip
+	// launch when attempts >= MaxReEnqueueAttempts). Default zero.
+	ReEnqueueAttempts int `json:"re_enqueue_attempts,omitempty"`
 }
 
 // LifecycleMessage is the payload published by webhook to the lifecycle
