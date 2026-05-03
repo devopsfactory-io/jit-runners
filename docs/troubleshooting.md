@@ -813,7 +813,7 @@ If this returns "no objects found", the `data.http` → `local_file` → `google
 
 - **GitHub Release missing the zip**: the release's assets must include `webhook.zip`, `scaleup.zip`, `scaledown.zip`, `lifecycle.zip`, `rebalancer.zip`. Verify at `https://github.com/devopsfactory-io/jit-runners/releases/tag/<tag>`.
 - **Network failure during `tofu plan`**: `data.http` re-fetches each plan; transient network errors fail plan. Re-run.
-- **GitHub rate limit**: unauthenticated GitHub fetches are rate-limited. If apply runs many times in a short window, you may hit the limit. Wait or authenticate via `var.github_token`.
+- **GitHub rate limit**: unauthenticated GitHub fetches are rate-limited (currently 60 requests/hour from a given IP). If apply runs many times in a short window, you may hit the limit. Wait for the limit window to reset, or run apply from a different egress IP.
 
 #### Resolution
 
