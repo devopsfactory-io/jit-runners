@@ -6,8 +6,8 @@ import (
 	"log"
 	"time"
 
-	awssqs "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/sqs"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/compute"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
 )
 
@@ -18,11 +18,11 @@ type ghClient interface {
 	DeregisterRunner(ctx context.Context, ownerRepo string, runnerID int64) error
 }
 
-// scaleupPublisher is the narrow surface of the SQS publisher used by
-// Cleaner to re-enqueue stale-pending records. Satisfied by
-// *aws/sqs.Publisher (via the typed PublishScaleUp helper).
+// scaleupPublisher is the narrow surface of the queue publisher used by
+// Cleaner to re-enqueue stale-pending records. Satisfied by queue.Publisher
+// (any cloud).
 type scaleupPublisher interface {
-	PublishScaleUp(ctx context.Context, msg *awssqs.ScaleUpMessage) error
+	Publish(ctx context.Context, m queue.Msg) error
 }
 
 // Cleaner reaps stale runner records and (for stale-pending) re-enqueues a
@@ -143,15 +143,15 @@ func (c *Cleaner) sweepStalePending(ctx context.Context, runners []state.Runner,
 
 		if r.ReEnqueueAttempts < c.MaxReEnqueueAttempts {
 			next := r.ReEnqueueAttempts + 1
-			msg := &awssqs.ScaleUpMessage{
+			msg := &queue.ScaleUpMessage{
 				EventAction:       "queued",
 				JobID:             r.JobID,
 				RepositoryFull:    r.Repository,
 				Labels:            r.Labels,
-				Source:            awssqs.SourceWebhook,
+				Source:            queue.SourceWebhook,
 				ReEnqueueAttempts: next,
 			}
-			if err := c.ScaleUpPublisher.PublishScaleUp(ctx, msg); err != nil {
+			if err := queue.PublishScaleUp(ctx, c.ScaleUpPublisher, msg); err != nil {
 				log.Printf("cleanup: re-enqueue publish failed for %s: %v", r.ID, err)
 				result.Errors++
 				continue

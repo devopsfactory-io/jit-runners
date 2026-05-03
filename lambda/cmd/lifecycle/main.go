@@ -2,9 +2,9 @@
 // SQS messages (workflow_job in_progress / completed) and applies the
 // state-machine transition + GitHub deregister side-effect.
 //
-// Construction mirrors cmd/scaledown and cmd/scaleup: load AWS config,
-// build the DynamoDB-backed state.RunnerStore via internal/aws/dynamo, and
-// mint an installation token at startup for DeregisterRunner.
+// Construction mirrors cmd/scaledown and cmd/scaleup: load config, build
+// the provider bundle via provider.New, and mint an installation token at
+// startup for DeregisterRunner.
 package main
 
 import (
@@ -16,19 +16,21 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 
-	awsdynamo "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/dynamo"
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/lifecycle"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/provider"
 )
 
 var (
 	cfgOnce sync.Once
 	appCfg  *appconfig.Config
 	cfgErr  error
+
+	bundleOnce sync.Once
+	bundleRef  *provider.Bundle
+	bundleErr  error
 )
 
 func main() {
@@ -41,12 +43,12 @@ func handler(ctx context.Context, ev events.SQSEvent) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	awsCfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		return fmt.Errorf("load AWS config: %w", err)
+	bundleOnce.Do(func() {
+		bundleRef, bundleErr = provider.New(ctx, os.Getenv("CLOUD_PROVIDER"))
+	})
+	if bundleErr != nil {
+		return fmt.Errorf("provider.New: %w", bundleErr)
 	}
-
-	store := awsdynamo.NewStore(dynamodb.NewFromConfig(awsCfg), cfg.TableName)
 
 	// Mint a real installation token when GITHUB_INSTALLATION_ID is set.
 	// Without it we fall back to a tokenless client and DeregisterRunner
@@ -58,7 +60,7 @@ func handler(ctx context.Context, ev events.SQSEvent) error {
 		return fmt.Errorf("github client: %w", err)
 	}
 
-	h := lifecycle.New(store, ghClient, log.Default())
+	h := lifecycle.New(bundleRef.State, ghClient, log.Default())
 
 	for _, rec := range ev.Records {
 		if err := h.HandleSQS(ctx, []byte(rec.Body)); err != nil {

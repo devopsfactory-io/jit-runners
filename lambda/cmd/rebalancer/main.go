@@ -1,8 +1,8 @@
 // Package main is the rebalancer Lambda entry point.
 //
 // EventBridge fires this Lambda every 1 minute. The handler instantiates
-// the GitHub client, DDB store, and SQS publisher; computes the
-// per-label-set (demand - supply) gap; and publishes ScaleUpMessage with
+// the GitHub client, provider bundle (DDB store + SQS publisher); computes
+// the per-label-set (demand - supply) gap; and publishes ScaleUpMessage with
 // Source=SourceRebalancer for each missing slot. See the design spec at
 // repositories/zettelkasten/Projects/jit-runners/specs/2026-05-02-effective-scaleup-design.md.
 package main
@@ -16,14 +16,10 @@ import (
 	"time"
 
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	awssqssdk "github.com/aws/aws-sdk-go-v2/service/sqs"
 
-	awsdynamo "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/dynamo"
-	awssqs "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/sqs"
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/provider"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/rebalancer"
 )
 
@@ -31,6 +27,10 @@ var (
 	cfgOnce sync.Once
 	appCfg  *appconfig.Config
 	cfgErr  error
+
+	bundleOnce sync.Once
+	bundleRef  *provider.Bundle
+	bundleErr  error
 )
 
 // activityWindow scopes the rebalancer's per-cycle work to repos that
@@ -55,13 +55,12 @@ func handler(ctx context.Context) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	awsCfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		return fmt.Errorf("load AWS config: %w", err)
+	bundleOnce.Do(func() {
+		bundleRef, bundleErr = provider.New(ctx, os.Getenv("CLOUD_PROVIDER"))
+	})
+	if bundleErr != nil {
+		return fmt.Errorf("provider.New: %w", bundleErr)
 	}
-
-	store := awsdynamo.NewStore(dynamodb.NewFromConfig(awsCfg), cfg.TableName)
-	publisher := awssqs.NewPublisher(awssqssdk.NewFromConfig(awsCfg), cfg.QueueURL)
 
 	ghClient, err := newGitHubClient(ctx, cfg)
 	if err != nil {
@@ -69,7 +68,7 @@ func handler(ctx context.Context) error {
 	}
 
 	since := time.Now().Add(-activityWindow)
-	repos, err := store.ListActiveRepos(ctx, since)
+	repos, err := bundleRef.State.ListActiveRepos(ctx, since)
 	if err != nil {
 		log.Printf("rebalancer: list active repos: %v", err)
 		// Return nil so EventBridge does not retry-storm. Next cycle (1 min)
@@ -79,7 +78,7 @@ func handler(ctx context.Context) error {
 
 	var errCount int
 	for _, repo := range repos {
-		if err := rebalancer.Rebalance(ctx, ghClient, store, publisher, repo, cfg.InstallationID); err != nil {
+		if err := rebalancer.Rebalance(ctx, ghClient, bundleRef.State, bundleRef.JobsPublisher, repo, cfg.InstallationID); err != nil {
 			log.Printf("rebalancer: cycle error repo=%s: %v", repo, err)
 			errCount++
 		}

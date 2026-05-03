@@ -2,12 +2,13 @@ package rebalancer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
 
-	awssqs "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/sqs"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state/memstore"
 )
@@ -22,15 +23,19 @@ func (f *fakeGH) ListQueuedWorkflowJobs(_ context.Context, _ string) ([]github.Q
 }
 
 type fakePub struct {
-	published []*awssqs.ScaleUpMessage
+	published []*queue.ScaleUpMessage
 	err       error
 }
 
-func (f *fakePub) PublishScaleUp(_ context.Context, m *awssqs.ScaleUpMessage) error {
+func (f *fakePub) Publish(_ context.Context, m queue.Msg) error {
 	if f.err != nil {
 		return f.err
 	}
-	f.published = append(f.published, m)
+	var msg queue.ScaleUpMessage
+	if err := json.Unmarshal(m.Body, &msg); err != nil {
+		return err
+	}
+	f.published = append(f.published, &msg)
 	return nil
 }
 
@@ -75,8 +80,8 @@ func TestRebalance_DemandExceedsSupply_PublishesGap(t *testing.T) {
 		t.Errorf("expected 3 publishes (5 demand - 2 supply), got %d", len(pub.published))
 	}
 	for _, m := range pub.published {
-		if m.Source != awssqs.SourceRebalancer {
-			t.Errorf("published Source = %q, want %q", m.Source, awssqs.SourceRebalancer)
+		if m.Source != queue.SourceRebalancer {
+			t.Errorf("published Source = %q, want %q", m.Source, queue.SourceRebalancer)
 		}
 		if m.RepositoryFull != "owner/repo" {
 			t.Errorf("published RepositoryFull = %q, want %q", m.RepositoryFull, "owner/repo")

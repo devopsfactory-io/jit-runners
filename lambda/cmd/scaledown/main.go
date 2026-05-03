@@ -9,16 +9,10 @@ import (
 	"sync"
 
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	awsec2sdk "github.com/aws/aws-sdk-go-v2/service/ec2"
-	awssqssdk "github.com/aws/aws-sdk-go-v2/service/sqs"
 
-	awsdynamo "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/dynamo"
-	awsec2 "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/ec2"
-	awssqs "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/sqs"
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/provider"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/runner"
 )
 
@@ -26,30 +20,28 @@ var (
 	cfgOnce sync.Once
 	appCfg  *appconfig.Config
 	cfgErr  error
+
+	bundleOnce sync.Once
+	bundleRef  *provider.Bundle
+	bundleErr  error
 )
 
 func main() {
 	lambda.Start(handler)
 }
 
-// TODO(phase B): replace direct AWS wiring with provider.New(provider.AWS|GCP).
 func handler(ctx context.Context) error {
 	cfg, err := loadConfig(ctx)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	awsCfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		return fmt.Errorf("load AWS config: %w", err)
-	}
-
-	store := awsdynamo.NewStore(dynamodb.NewFromConfig(awsCfg), cfg.TableName)
-	launcher := awsec2.NewLauncher(awsec2sdk.NewFromConfig(awsCfg), awsec2.LauncherOptions{
-		SecurityGroupID:    cfg.SecurityGroupID,
-		IAMInstanceProfile: cfg.IAMInstanceProfile,
+	bundleOnce.Do(func() {
+		bundleRef, bundleErr = provider.New(ctx, os.Getenv("CLOUD_PROVIDER"))
 	})
-	publisher := awssqs.NewPublisher(awssqssdk.NewFromConfig(awsCfg), cfg.QueueURL)
+	if bundleErr != nil {
+		return fmt.Errorf("provider.New: %w", bundleErr)
+	}
 
 	// Mint a real installation token at sweep start when GITHUB_INSTALLATION_ID
 	// is set so DeregisterRunner calls in terminateAndDeregister actually
@@ -69,7 +61,7 @@ func handler(ctx context.Context) error {
 	maxAgeMinutes := envInt("MAX_RUNNER_AGE_MINUTES", 360)
 	maxReEnqueueAttempts := envInt("MAX_RE_ENQUEUE_ATTEMPTS", 3)
 
-	cleaner := runner.NewCleaner(store, launcher, ghClient, publisher,
+	cleaner := runner.NewCleaner(bundleRef.State, bundleRef.Compute, ghClient, bundleRef.JobsPublisher,
 		staleMinutes, maxAgeMinutes, maxReEnqueueAttempts)
 	result, err := cleaner.Run(ctx)
 	if err != nil {

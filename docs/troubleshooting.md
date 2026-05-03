@@ -602,25 +602,36 @@ aws logs tail /jit-runners/runner-agent --since 1h --filter-pattern '"<runner_id
 
 Or open the AWS Console: CloudWatch → Log groups → `/jit-runners/runner-agent` → log stream prefixed `<runner_id>/`.
 
-### Increase verbosity for the next runners
+### Enabling runner-agent debug logs
 
-Flip the SSM toggle to `debug`. Effect is visible on the next-but-one scaleup invocation (≤30s due to the in-process cache):
+The runner agent (`actions/runner`) reads `ACTIONS_RUNNER_DEBUG` and `ACTIONS_STEP_DEBUG` from the GitHub repo/org **secrets or variables** at job-pickup time, NOT from the runner instance's process environment. As a result, setting these env vars in the EC2 userdata or via SSM has no effect on the runner agent's log level.
 
-```bash
-aws ssm put-parameter \
-  --name /jit-runners/runner-log-level \
-  --value debug \
-  --overwrite
+To get debug-level logs from a JIT runner, use one of:
+
+#### Option A — Workflow-level env injection (recommended, no infra)
+
+Add to the workflow YAML:
+
+```yaml
+jobs:
+  my-job:
+    runs-on: [self-hosted, large]
+    env:
+      ACTIONS_RUNNER_DEBUG: "true"
+      ACTIONS_STEP_DEBUG: "true"
+    steps:
+      - run: ...
 ```
 
-Reproduce the issue, inspect the debug-level log lines (look for `##[debug]` markers in `Worker_*.log`), then revert:
+The runner agent picks these up from the job context at job start.
 
-```bash
-aws ssm put-parameter \
-  --name /jit-runners/runner-log-level \
-  --value info \
-  --overwrite
-```
+#### Option B — Repository-level secret/variable
+
+In the GitHub UI: **Settings → Secrets and variables → Actions → Variables**, add `ACTIONS_RUNNER_DEBUG=true` and `ACTIONS_STEP_DEBUG=true`. Effective for ALL workflow runs in the repo. Remove when done — these are noisy.
+
+The CloudWatch agent in the AMI continues to forward `_diag/*.log` regardless of the runner's log level, so option A's debug output reaches your operator dashboard the same way INFO output does.
+
+**See issue [#61](https://github.com/devopsfactory-io/jit-runners/issues/61) for the historical context.** The previous SSM-based toggle (`/jit-runners/runner-log-level`) was removed in PR #46 because the underlying mechanism never worked.
 
 ### Reproducing a silent failure for testing
 

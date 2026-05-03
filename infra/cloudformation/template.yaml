@@ -357,14 +357,6 @@ Resources:
                 Resource:
                   - !Ref WebhookSecretArn
                   - !Ref PrivateKeySecretArn
-        - PolicyName: SSMReadRunnerLogLevel
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action: ssm:GetParameter
-                Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/jit-runners/runner-log-level"
-
   ScaleUpFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -695,18 +687,6 @@ Resources:
           MetricNamespace: JitRunners/RunnerAgent
           MetricValue: "1"
           DefaultValue: 0
-
-  RunnerLogLevelParameter:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: /jit-runners/runner-log-level
-      Type: String
-      Value: info
-      AllowedPattern: "^(info|debug)$"
-      Description: |
-        Controls runner-agent verbosity. Set to "debug" while
-        investigating; flip back to "info" afterward. Read by the
-        scaleup Lambda on each invocation (30s in-process cache).
 
 Outputs:
   WebhookUrl:

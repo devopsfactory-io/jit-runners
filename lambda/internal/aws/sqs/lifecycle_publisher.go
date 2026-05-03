@@ -2,47 +2,44 @@ package sqs
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 
-	"github.com/devopsfactory-io/jit-runners/lambda/internal/lifecycle"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 )
 
-// LifecyclePublisher sends workflow_job lifecycle events
-// (in_progress, completed) to the lifecycle SQS queue.
-//
-// Mirrors Publisher in shape, but targets a different queue and uses no
-// delivery delay: lifecycle events should be processed promptly so the
-// runner state machine in DDB stays in sync with GitHub.
+// LifecyclePublisher publishes generic queue.Msg payloads to the lifecycle
+// SQS queue. Callers use queue.PublishLifecycle for the typed entry point.
 type LifecyclePublisher struct {
 	client   Sender
 	queueURL string
 }
 
-// NewLifecyclePublisher creates a LifecyclePublisher for the given queue URL.
+// NewLifecyclePublisher returns a queue.Publisher bound to the lifecycle
+// queue URL.
 func NewLifecyclePublisher(client Sender, queueURL string) *LifecyclePublisher {
-	return &LifecyclePublisher{
-		client:   client,
-		queueURL: queueURL,
-	}
+	return &LifecyclePublisher{client: client, queueURL: queueURL}
 }
 
-// Publish sends a lifecycle.Message to the SQS queue with no delay.
-func (p *LifecyclePublisher) Publish(ctx context.Context, msg *lifecycle.Message) error {
-	body, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("marshal lifecycle message: %w", err)
+// Publish sends m.Body as the body of a new SQS message in the lifecycle queue.
+// Empty bodies are rejected so callers can distinguish accidental empty
+// publishes from genuine zero-length payloads. Use queue.PublishLifecycle for
+// the typed entry point.
+func (p *LifecyclePublisher) Publish(ctx context.Context, m queue.Msg) error {
+	if len(m.Body) == 0 {
+		return fmt.Errorf("aws/sqs: lifecycle publish: empty body")
 	}
-
-	_, err = p.client.SendMessage(ctx, &sqs.SendMessageInput{
+	_, err := p.client.SendMessage(ctx, &sqs.SendMessageInput{
 		QueueUrl:    aws.String(p.queueURL),
-		MessageBody: aws.String(string(body)),
+		MessageBody: aws.String(string(m.Body)),
 	})
 	if err != nil {
-		return fmt.Errorf("send lifecycle SQS message: %w", err)
+		return fmt.Errorf("aws/sqs: lifecycle publish: %w", err)
 	}
 	return nil
 }
+
+// Compile-time assertion that *LifecyclePublisher satisfies queue.Publisher.
+var _ queue.Publisher = (*LifecyclePublisher)(nil)
