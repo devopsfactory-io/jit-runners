@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
+	funcframework "github.com/GoogleCloudPlatform/functions-framework-go/funcframework"
 
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/provider"
@@ -32,6 +35,17 @@ var (
 )
 
 func main() {
+	if os.Getenv("CLOUD_PROVIDER") == "gcp" {
+		funcframework.RegisterHTTPFunction("/", gcpHTTPHandler)
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "8080"
+		}
+		if err := funcframework.Start(port); err != nil {
+			log.Fatalf("funcframework.Start: %v", err)
+		}
+		return
+	}
 	lambda.Start(handler)
 }
 
@@ -64,6 +78,37 @@ func handler(ctx context.Context, req events.LambdaFunctionURLRequest) (events.L
 		log.Printf("handle webhook: %s", resp.String())
 	}
 	return response(resp.Status, resp.Body), nil
+}
+
+// gcpHTTPHandler is the GCP Cloud Run entry point. Cloud Run delivers GitHub
+// webhook calls directly via HTTPS; we read the body and headers, then reuse
+// the same webhook.Handler.Handle path as the AWS branch.
+func gcpHTTPHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("gcpHTTPHandler: read body: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	sig := r.Header.Get("x-hub-signature-256")
+	eventType := r.Header.Get("x-github-event")
+
+	h, err := loadHandler(r.Context())
+	if err != nil {
+		log.Printf("gcpHTTPHandler: init handler: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	resp := h.Handle(r.Context(), eventType, sig, body)
+	if resp.Status >= 500 {
+		log.Printf("gcpHTTPHandler: handle webhook: %s", resp.String())
+	}
+	w.WriteHeader(resp.Status)
+	_, _ = w.Write([]byte(resp.Body))
 }
 
 func loadConfig(ctx context.Context) (*appconfig.Config, error) {
