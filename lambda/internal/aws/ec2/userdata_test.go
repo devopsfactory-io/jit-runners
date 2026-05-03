@@ -15,12 +15,11 @@ func TestGenerateUserData(t *testing.T) {
 		notParts  []string
 	}{
 		{
-			name: "valid params info-level",
+			name: "valid params",
 			params: &UserDataParams{
-				RunnerVersion:  "2.321.0",
-				JITConfig:      "encoded-jit-config-string",
-				RunnerID:       42,
-				RunnerLogLevel: "info",
+				RunnerVersion: "2.321.0",
+				JITConfig:     "encoded-jit-config-string",
+				RunnerID:      42,
 			},
 			wantParts: []string{
 				"#!/bin/bash",
@@ -29,7 +28,6 @@ func TestGenerateUserData(t *testing.T) {
 				"export RUNNER_ID=42",
 				"sed -i \"s|\\${RUNNER_ID}|${RUNNER_ID}|g\" /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json",
 				"systemctl restart amazon-cloudwatch-agent",
-				"su - runner -c \"export ACTIONS_RUNNER_DEBUG=",
 				"./run.sh --jitconfig",
 				"tee /var/log/jit-runner-userdata.log",
 				"RUNTIME_SECS",
@@ -45,67 +43,30 @@ func TestGenerateUserData(t *testing.T) {
 				"jq",
 				"rm -f runner.tar.gz",
 			},
-			notParts: []string{
-				"export ACTIONS_RUNNER_DEBUG=true",
-				"export ACTIONS_STEP_DEBUG=true",
-			},
-		},
-		{
-			name: "valid params debug-level",
-			params: &UserDataParams{
-				RunnerVersion:  "2.321.0",
-				JITConfig:      "encoded-jit-config-string",
-				RunnerID:       7,
-				RunnerLogLevel: "debug",
-			},
-			wantParts: []string{
-				"export RUNNER_ID=7",
-				"export ACTIONS_RUNNER_DEBUG=true",
-				"export ACTIONS_STEP_DEBUG=true",
-				"JIT_NO_JOB_PICKUP runner_id=7",
-			},
 		},
 		{
 			name: "missing runner version",
 			params: &UserDataParams{
-				JITConfig:      "some-config",
-				RunnerID:       1,
-				RunnerLogLevel: "info",
+				JITConfig: "some-config",
+				RunnerID:  1,
 			},
 			wantErr: true,
 		},
 		{
 			name: "missing JIT config",
 			params: &UserDataParams{
-				RunnerVersion:  "2.321.0",
-				RunnerID:       1,
-				RunnerLogLevel: "info",
+				RunnerVersion: "2.321.0",
+				RunnerID:      1,
 			},
 			wantErr: true,
 		},
 		{
 			name: "missing runner id",
 			params: &UserDataParams{
-				RunnerVersion:  "2.321.0",
-				JITConfig:      "some-config",
-				RunnerLogLevel: "info",
-			},
-			wantErr: true,
-		},
-		{
-			name: "empty runner log level defaults to no debug",
-			params: &UserDataParams{
 				RunnerVersion: "2.321.0",
 				JITConfig:     "some-config",
-				RunnerID:      99,
 			},
-			wantParts: []string{
-				"export RUNNER_ID=99",
-			},
-			notParts: []string{
-				"export ACTIONS_RUNNER_DEBUG=true",
-				"export ACTIONS_STEP_DEBUG=true",
-			},
+			wantErr: true,
 		},
 	}
 

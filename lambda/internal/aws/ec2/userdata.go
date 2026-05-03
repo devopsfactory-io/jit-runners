@@ -20,9 +20,7 @@ set -uo pipefail
 RUNNER_VERSION="{{.RunnerVersion}}"
 JIT_CONFIG="{{.JITConfig}}"
 export RUNNER_ID={{.RunnerID}}
-{{if eq .RunnerLogLevel "debug"}}export ACTIONS_RUNNER_DEBUG=true
-export ACTIONS_STEP_DEBUG=true
-{{end}}
+
 # IMDSv2 token-based metadata access
 IMDS_TOKEN=$(curl -sf -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
 INSTANCE_ID=$(curl -sf -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" http://169.254.169.254/latest/meta-data/instance-id)
@@ -81,7 +79,7 @@ fi
 echo "Starting runner with JIT config..."
 START_TIME=$(date +%s)
 set +e
-su - runner -c "export ACTIONS_RUNNER_DEBUG=${ACTIONS_RUNNER_DEBUG:-false} ACTIONS_STEP_DEBUG=${ACTIONS_STEP_DEBUG:-false}; cd /home/runner/actions-runner && ./run.sh --jitconfig '${JIT_CONFIG}'" 2>&1 | tee /var/log/jit-runner-userdata.log
+su - runner -c "cd /home/runner/actions-runner && ./run.sh --jitconfig '${JIT_CONFIG}'" 2>&1 | tee /var/log/jit-runner-userdata.log
 RUNNER_EXIT=${PIPESTATUS[0]}
 set -e
 END_TIME=$(date +%s)
@@ -118,10 +116,6 @@ type UserDataParams struct {
 	// for the per-runner DynamoDB record). Plumbed into the userdata so the
 	// CloudWatch agent can stamp it into the log stream name.
 	RunnerID int64
-	// RunnerLogLevel is "info" or "debug". When "debug", the userdata
-	// exports ACTIONS_RUNNER_DEBUG=true and ACTIONS_STEP_DEBUG=true so the
-	// runner agent emits debug-level logs. Empty string is treated as "info".
-	RunnerLogLevel string
 }
 
 // GenerateUserData renders the user-data script and returns it base64-encoded.
