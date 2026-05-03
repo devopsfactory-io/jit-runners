@@ -73,7 +73,7 @@ build {
 
   # Upload all provisioning scripts to the remote instance
   provisioner "file" {
-    source      = "scripts/"
+    source      = "scripts/aws/"
     destination = "/tmp/packer-scripts"
   }
 
