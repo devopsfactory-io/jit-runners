@@ -4,22 +4,21 @@ import (
 	"context"
 	"fmt"
 
-	internalsqs "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/sqs"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
-	"github.com/devopsfactory-io/jit-runners/lambda/internal/lifecycle"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 )
 
 // scaleUpPublisher is the minimal surface the Handler needs from a
-// scale-up queue publisher. *internalsqs.Publisher satisfies this via its
+// scale-up queue publisher. *aws/sqs.Publisher satisfies this via its
 // PublishScaleUp helper.
 type scaleUpPublisher interface {
-	PublishScaleUp(ctx context.Context, msg *internalsqs.ScaleUpMessage) error
+	PublishScaleUp(ctx context.Context, msg *queue.ScaleUpMessage) error
 }
 
 // lifecyclePublisher is the minimal surface the Handler needs from the
-// lifecycle queue publisher. *internalsqs.LifecyclePublisher satisfies this.
+// lifecycle queue publisher. *aws/sqs.LifecyclePublisher satisfies this.
 type lifecyclePublisher interface {
-	Publish(ctx context.Context, msg *lifecycle.Message) error
+	Publish(ctx context.Context, msg *queue.LifecycleMessage) error
 }
 
 // Handler dispatches GitHub workflow_job webhook events to the correct
@@ -94,14 +93,14 @@ func (h *Handler) handleQueued(ctx context.Context, result *ParseResult) Respons
 		return Response{Status: 200, Body: "OK"}
 	}
 
-	msg := &internalsqs.ScaleUpMessage{
+	msg := &queue.ScaleUpMessage{
 		EventAction:    result.Action,
 		JobID:          result.Event.WorkflowJob.ID,
 		RunID:          result.Event.WorkflowJob.RunID,
 		RepositoryFull: result.Event.Repository.FullName,
 		Labels:         result.Event.WorkflowJob.Labels,
 		InstallationID: result.Event.Installation.ID,
-		Source:         internalsqs.SourceWebhook,
+		Source:         queue.SourceWebhook,
 	}
 	if err := h.ScaleUpPublisher.PublishScaleUp(ctx, msg); err != nil {
 		return Response{Status: 500, Body: "Queue error"}
@@ -121,7 +120,7 @@ func (h *Handler) handleLifecycle(ctx context.Context, result *ParseResult) Resp
 		return Response{Status: 500, Body: "Lifecycle publisher not configured"}
 	}
 
-	msg := &lifecycle.Message{
+	msg := &queue.LifecycleMessage{
 		JobID:      result.Event.WorkflowJob.ID,
 		Repo:       result.Event.Repository.FullName,
 		RunnerID:   result.Event.WorkflowJob.RunnerID,

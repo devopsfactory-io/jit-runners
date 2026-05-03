@@ -24,6 +24,7 @@ import (
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/compute"
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/runner"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/webhook"
@@ -204,7 +205,7 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, launcher compute.
 // fresh Put — the partition key is the just-returned GitHub runner_id and
 // no prior record can exist at that key. On Put failure we deregister the
 // GitHub runner so we don't leak registration state.
-func writePendingRecord(ctx context.Context, gh *github.Client, store state.RunnerStore, msg *awssqs.ScaleUpMessage, pending state.Runner) error {
+func writePendingRecord(ctx context.Context, gh *github.Client, store state.RunnerStore, msg *queue.ScaleUpMessage, pending state.Runner) error {
 	if err := store.Put(ctx, pending); err != nil {
 		if derr := gh.DeregisterRunner(ctx, msg.RepositoryFull, pending.GitHubRunnerID); derr != nil {
 			log.Printf("deregister after pending-put failure for runner=%d job=%d: %v",
@@ -219,7 +220,7 @@ func writePendingRecord(ctx context.Context, gh *github.Client, store state.Runn
 // marks the record failed after a post-registration error path. Errors are
 // logged but not returned — the caller is already returning the launch
 // error.
-func markLaunchFailed(ctx context.Context, gh *github.Client, store state.RunnerStore, msg *awssqs.ScaleUpMessage, recordID string, ghRunnerID int64) {
+func markLaunchFailed(ctx context.Context, gh *github.Client, store state.RunnerStore, msg *queue.ScaleUpMessage, recordID string, ghRunnerID int64) {
 	if err := gh.DeregisterRunner(ctx, msg.RepositoryFull, ghRunnerID); err != nil {
 		log.Printf("deregister runner=%d after launch failure for %s job=%d: %v",
 			ghRunnerID, msg.RepositoryFull, msg.JobID, err)
@@ -267,8 +268,8 @@ func resolveAMI(cfg *appconfig.Config, labels []string) string {
 //
 // On the webhook path, an empty Source is treated as SourceWebhook for
 // backwards compat with in-flight messages at deploy time.
-func shouldLaunch(ctx context.Context, gh queueLister, store state.RunnerStore, msg *awssqs.ScaleUpMessage) (bool, error) {
-	if msg.Source == awssqs.SourceRebalancer {
+func shouldLaunch(ctx context.Context, gh queueLister, store state.RunnerStore, msg *queue.ScaleUpMessage) (bool, error) {
+	if msg.Source == queue.SourceRebalancer {
 		return true, nil
 	}
 

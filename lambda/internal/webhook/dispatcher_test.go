@@ -11,32 +11,31 @@ import (
 	"path/filepath"
 	"testing"
 
-	internalsqs "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/sqs"
-	"github.com/devopsfactory-io/jit-runners/lambda/internal/lifecycle"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 )
 
 // fakeScaleUpPublisher captures the last ScaleUpMessage seen.
 type fakeScaleUpPublisher struct {
 	calls   int
-	last    *internalsqs.ScaleUpMessage
+	last    *queue.ScaleUpMessage
 	failErr error
 }
 
-func (f *fakeScaleUpPublisher) PublishScaleUp(_ context.Context, msg *internalsqs.ScaleUpMessage) error {
+func (f *fakeScaleUpPublisher) PublishScaleUp(_ context.Context, msg *queue.ScaleUpMessage) error {
 	f.calls++
 	f.last = msg
 	return f.failErr
 }
 
-// fakeLifecyclePublisher captures the last lifecycle.Message seen.
+// fakeLifecyclePublisher captures the last queue.LifecycleMessage seen.
 type fakeLifecyclePublisher struct {
 	calls   int
-	last    *lifecycle.Message
+	last    *queue.LifecycleMessage
 	rawBody []byte // serialized round-trip, for shape assertions
 	failErr error
 }
 
-func (f *fakeLifecyclePublisher) Publish(_ context.Context, msg *lifecycle.Message) error {
+func (f *fakeLifecyclePublisher) Publish(_ context.Context, msg *queue.LifecycleMessage) error {
 	f.calls++
 	f.last = msg
 	// Round-trip through JSON so tests can assert wire shape.
@@ -98,8 +97,8 @@ func TestHandler_Handle_QueuedPublishesToScaleUp(t *testing.T) {
 	if scaleUp.last.EventAction != "queued" {
 		t.Errorf("scaleUp.EventAction = %q, want queued", scaleUp.last.EventAction)
 	}
-	if scaleUp.last.Source != internalsqs.SourceWebhook {
-		t.Errorf("Source = %q, want %q", scaleUp.last.Source, internalsqs.SourceWebhook)
+	if scaleUp.last.Source != queue.SourceWebhook {
+		t.Errorf("Source = %q, want %q", scaleUp.last.Source, queue.SourceWebhook)
 	}
 }
 
@@ -132,7 +131,7 @@ func TestHandler_Handle_InProgressPublishesToLifecycle(t *testing.T) {
 	}
 
 	// Assert wire shape: round-trip the published bytes and check fields.
-	var got lifecycle.Message
+	var got queue.LifecycleMessage
 	if err := json.Unmarshal(lifeP.rawBody, &got); err != nil {
 		t.Fatalf("unmarshal published lifecycle msg: %v", err)
 	}
@@ -335,7 +334,7 @@ func TestHandler_Handle_LifecyclePlumbsRunnerID(t *testing.T) {
 		t.Fatalf("lifecycle.calls = %d, want 1", lifeP.calls)
 	}
 
-	var got lifecycle.Message
+	var got queue.LifecycleMessage
 	if err := json.Unmarshal(lifeP.rawBody, &got); err != nil {
 		t.Fatalf("unmarshal published lifecycle msg: %v", err)
 	}

@@ -8,7 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 
-	"github.com/devopsfactory-io/jit-runners/lambda/internal/lifecycle"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 )
 
 // LifecyclePublisher sends workflow_job lifecycle events
@@ -30,8 +30,8 @@ func NewLifecyclePublisher(client Sender, queueURL string) *LifecyclePublisher {
 	}
 }
 
-// Publish sends a lifecycle.Message to the SQS queue with no delay.
-func (p *LifecyclePublisher) Publish(ctx context.Context, msg *lifecycle.Message) error {
+// Publish sends a queue.LifecycleMessage to the SQS queue with no delay.
+func (p *LifecyclePublisher) Publish(ctx context.Context, msg *queue.LifecycleMessage) error {
 	body, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("marshal lifecycle message: %w", err)

@@ -23,13 +23,13 @@ func (m *mockSQSSender) SendMessage(_ context.Context, input *sqs.SendMessageInp
 func TestPublisher_Publish(t *testing.T) {
 	tests := []struct {
 		name    string
-		msg     *ScaleUpMessage
+		msg     *queue.ScaleUpMessage
 		sendErr error
 		wantErr bool
 	}{
 		{
 			name: "successful publish",
-			msg: &ScaleUpMessage{
+			msg: &queue.ScaleUpMessage{
 				EventAction:    "queued",
 				JobID:          123,
 				RunID:          456,
@@ -40,7 +40,7 @@ func TestPublisher_Publish(t *testing.T) {
 		},
 		{
 			name: "send error",
-			msg: &ScaleUpMessage{
+			msg: &queue.ScaleUpMessage{
 				EventAction:    "queued",
 				JobID:          123,
 				RepositoryFull: "org/repo",
@@ -81,7 +81,7 @@ func TestPublisher_Publish(t *testing.T) {
 			}
 
 			// Verify message body can be deserialized.
-			var got ScaleUpMessage
+			var got queue.ScaleUpMessage
 			if err := json.Unmarshal([]byte(*mock.lastInput.MessageBody), &got); err != nil {
 				t.Fatalf("unmarshal sent message: %v", err)
 			}

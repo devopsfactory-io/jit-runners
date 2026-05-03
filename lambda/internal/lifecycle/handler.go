@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
 )
 
@@ -43,7 +44,7 @@ func nextStatus(current, action string) (next string, ok bool) {
 // deliveries. Per issue #52, this is the only stable runner identifier;
 // the prior (repo, job_id) lookup was racy under concurrent jobs.
 func (h *Handler) HandleSQS(ctx context.Context, body []byte) error {
-	var msg Message
+	var msg queue.LifecycleMessage
 	if err := json.Unmarshal(body, &msg); err != nil {
 		return fmt.Errorf("lifecycle: parse: %w", err)
 	}

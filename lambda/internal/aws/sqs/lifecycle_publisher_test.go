@@ -5,19 +5,19 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/devopsfactory-io/jit-runners/lambda/internal/lifecycle"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 )
 
 func TestLifecyclePublisher_Publish(t *testing.T) {
 	tests := []struct {
 		name    string
-		msg     *lifecycle.Message
+		msg     *queue.LifecycleMessage
 		sendErr error
 		wantErr bool
 	}{
 		{
 			name: "in_progress publish",
-			msg: &lifecycle.Message{
+			msg: &queue.LifecycleMessage{
 				JobID:    111,
 				Repo:     "org/repo",
 				RunnerID: 22,
@@ -26,7 +26,7 @@ func TestLifecyclePublisher_Publish(t *testing.T) {
 		},
 		{
 			name: "completed publish carries conclusion",
-			msg: &lifecycle.Message{
+			msg: &queue.LifecycleMessage{
 				JobID:      111,
 				Repo:       "org/repo",
 				RunnerID:   22,
@@ -36,7 +36,7 @@ func TestLifecyclePublisher_Publish(t *testing.T) {
 		},
 		{
 			name: "send error",
-			msg: &lifecycle.Message{
+			msg: &queue.LifecycleMessage{
 				JobID:  111,
 				Repo:   "org/repo",
 				Action: "in_progress",
@@ -70,7 +70,7 @@ func TestLifecyclePublisher_Publish(t *testing.T) {
 				t.Errorf("delay = %d, want 0", mock.lastInput.DelaySeconds)
 			}
 
-			var got lifecycle.Message
+			var got queue.LifecycleMessage
 			if err := json.Unmarshal([]byte(*mock.lastInput.MessageBody), &got); err != nil {
 				t.Fatalf("unmarshal sent message: %v", err)
 			}

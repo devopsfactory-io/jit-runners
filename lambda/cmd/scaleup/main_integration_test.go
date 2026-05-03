@@ -10,10 +10,10 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/google/uuid"
 
-	awssqs "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/sqs"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/compute"
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/runner"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state/memstore"
@@ -125,14 +125,14 @@ func TestShouldLaunch(t *testing.T) {
 	}{
 		{
 			name:      "rebalancer source always launches",
-			source:    awssqs.SourceRebalancer,
+			source:    queue.SourceRebalancer,
 			pending:   []state.Runner{{ID: "1", Status: state.StatusPending, Labels: []string{"self-hosted", "large"}}},
 			msgLabels: []string{"self-hosted", "large"},
 			want:      true,
 		},
 		{
 			name:   "webhook source: demand > supply launches",
-			source: awssqs.SourceWebhook,
+			source: queue.SourceWebhook,
 			queued: []github.QueuedJob{
 				{JobID: 1, Status: "queued", Labels: []string{"self-hosted", "large"}},
 				{JobID: 2, Status: "queued", Labels: []string{"self-hosted", "large"}},
@@ -143,7 +143,7 @@ func TestShouldLaunch(t *testing.T) {
 		},
 		{
 			name:      "webhook source: demand == supply skips",
-			source:    awssqs.SourceWebhook,
+			source:    queue.SourceWebhook,
 			queued:    []github.QueuedJob{{JobID: 1, Status: "queued", Labels: []string{"self-hosted", "large"}}},
 			pending:   []state.Runner{{ID: "1", Status: state.StatusPending, Labels: []string{"self-hosted", "large"}}},
 			msgLabels: []string{"self-hosted", "large"},
@@ -151,7 +151,7 @@ func TestShouldLaunch(t *testing.T) {
 		},
 		{
 			name:   "webhook source: demand < supply skips",
-			source: awssqs.SourceWebhook,
+			source: queue.SourceWebhook,
 			queued: []github.QueuedJob{{JobID: 1, Status: "queued", Labels: []string{"self-hosted", "large"}}},
 			pending: []state.Runner{
 				{ID: "1", Status: state.StatusPending, Labels: []string{"self-hosted", "large"}},
@@ -170,7 +170,7 @@ func TestShouldLaunch(t *testing.T) {
 		},
 		{
 			name:      "subset match: runner with extra label counts as supply",
-			source:    awssqs.SourceWebhook,
+			source:    queue.SourceWebhook,
 			queued:    []github.QueuedJob{{JobID: 1, Status: "queued", Labels: []string{"self-hosted", "large"}}},
 			pending:   []state.Runner{{ID: "1", Status: state.StatusPending, Labels: []string{"self-hosted", "large", "x64"}}},
 			msgLabels: []string{"self-hosted", "large"},
@@ -178,7 +178,7 @@ func TestShouldLaunch(t *testing.T) {
 		},
 		{
 			name:      "different label set: pending runner with diff labels does NOT count as supply",
-			source:    awssqs.SourceWebhook,
+			source:    queue.SourceWebhook,
 			queued:    []github.QueuedJob{{JobID: 1, Status: "queued", Labels: []string{"self-hosted", "large"}}},
 			pending:   []state.Runner{{ID: "1", Status: state.StatusPending, Labels: []string{"self-hosted", "medium"}}},
 			msgLabels: []string{"self-hosted", "large"},
@@ -186,7 +186,7 @@ func TestShouldLaunch(t *testing.T) {
 		},
 		{
 			name:      "GH error returned",
-			source:    awssqs.SourceWebhook,
+			source:    queue.SourceWebhook,
 			msgLabels: []string{"self-hosted", "large"},
 			wantErr:   true,
 		},
@@ -205,7 +205,7 @@ func TestShouldLaunch(t *testing.T) {
 					t.Fatalf("Put: %v", err)
 				}
 			}
-			msg := &awssqs.ScaleUpMessage{
+			msg := &queue.ScaleUpMessage{
 				Source:         tc.source,
 				Labels:         tc.msgLabels,
 				RepositoryFull: "owner/repo",

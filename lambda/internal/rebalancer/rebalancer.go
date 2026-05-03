@@ -10,8 +10,8 @@ import (
 	"log"
 	"sort"
 
-	awssqs "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/sqs"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
 )
 
@@ -24,7 +24,7 @@ type QueueLister interface {
 // ScaleUpPublisher is the narrow SQS publisher surface. Satisfied by
 // *aws/sqs.Publisher via its PublishScaleUp helper.
 type ScaleUpPublisher interface {
-	PublishScaleUp(ctx context.Context, msg *awssqs.ScaleUpMessage) error
+	PublishScaleUp(ctx context.Context, msg *queue.ScaleUpMessage) error
 }
 
 // Rebalance computes per-label-set demand from GitHub and supply from DDB
@@ -64,14 +64,14 @@ func Rebalance(ctx context.Context, gh QueueLister, store state.RunnerStore, pub
 		}
 		anchor := g.jobs[0]
 		for i := 0; i < gap; i++ {
-			msg := &awssqs.ScaleUpMessage{
+			msg := &queue.ScaleUpMessage{
 				EventAction:    "queued",
 				JobID:          anchor.JobID,
 				RunID:          anchor.RunID,
 				RepositoryFull: repoFull,
 				Labels:         g.labels,
 				InstallationID: installationID,
-				Source:         awssqs.SourceRebalancer,
+				Source:         queue.SourceRebalancer,
 			}
 			if err := pub.PublishScaleUp(ctx, msg); err != nil {
 				publishErrs = append(publishErrs, fmt.Errorf("publish for labels %v: %w", g.labels, err))

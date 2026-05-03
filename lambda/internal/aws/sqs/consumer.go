@@ -81,8 +81,8 @@ func (c *Consumer) Ack(ctx context.Context, handle string) error {
 }
 
 // ParseMessage deserializes an SQS message body into a ScaleUpMessage.
-func ParseMessage(body string) (*ScaleUpMessage, error) {
-	var msg ScaleUpMessage
+func ParseMessage(body string) (*queue.ScaleUpMessage, error) {
+	var msg queue.ScaleUpMessage
 	if err := json.Unmarshal([]byte(body), &msg); err != nil {
 		return nil, fmt.Errorf("unmarshal SQS message: %w", err)
 	}

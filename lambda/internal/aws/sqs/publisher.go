@@ -56,8 +56,8 @@ func (p *Publisher) Publish(ctx context.Context, m queue.Msg) error {
 
 // PublishScaleUp marshals msg and publishes it via Publish. Provided as a
 // typed convenience for callers (webhook dispatcher, scaledown re-enqueue)
-// that already speak in *ScaleUpMessage rather than queue.Msg.
-func (p *Publisher) PublishScaleUp(ctx context.Context, msg *ScaleUpMessage) error {
+// that already speak in *queue.ScaleUpMessage rather than queue.Msg.
+func (p *Publisher) PublishScaleUp(ctx context.Context, msg *queue.ScaleUpMessage) error {
 	if msg == nil {
 		return fmt.Errorf("ScaleUpMessage is nil")
 	}
