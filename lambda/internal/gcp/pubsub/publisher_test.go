@@ -2,10 +2,12 @@ package pubsub
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
-	"cloud.google.com/go/pubsub"        //nolint:staticcheck // v1 pinned per Phase C D7; v2 migration tracked separately
-	"cloud.google.com/go/pubsub/pstest" //nolint:staticcheck
+	"cloud.google.com/go/pubsub/v2"
+	pb "cloud.google.com/go/pubsub/v2/apiv1/pubsubpb"
+	"cloud.google.com/go/pubsub/v2/pstest"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -24,10 +26,11 @@ func newTestPublisher(t *testing.T, topicID string) (*Publisher, *pstest.Server,
 	if err != nil {
 		t.Fatalf("pubsub.NewClient: %v", err)
 	}
-	if _, err := client.CreateTopic(context.Background(), topicID); err != nil {
+	topicName := fmt.Sprintf("projects/test-project/topics/%s", topicID)
+	if _, err := client.TopicAdminClient.CreateTopic(context.Background(), &pb.Topic{Name: topicName}); err != nil {
 		t.Fatalf("CreateTopic: %v", err)
 	}
-	pub := NewPublisher(client, topicID)
+	pub := NewPublisher(client, topicName)
 	cleanup := func() {
 		_ = client.Close()
 		_ = conn.Close()

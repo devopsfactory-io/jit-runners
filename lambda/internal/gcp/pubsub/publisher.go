@@ -7,20 +7,22 @@ import (
 	"context"
 	"fmt"
 
-	"cloud.google.com/go/pubsub" //nolint:staticcheck // v1 pinned per Phase C D7; v2 migration is tracked separately
+	"cloud.google.com/go/pubsub/v2"
 
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 )
 
 // Publisher publishes queue.Msg bodies to a single Pub/Sub topic.
 type Publisher struct {
-	topic *pubsub.Topic
+	publisher *pubsub.Publisher
 }
 
-// NewPublisher returns a Publisher bound to the given topic. The caller owns
-// the *pubsub.Client lifecycle; closing the client closes underlying topics.
-func NewPublisher(client *pubsub.Client, topicID string) *Publisher {
-	return &Publisher{topic: client.Topic(topicID)}
+// NewPublisher returns a Publisher bound to the given topic. topicName must be
+// a fully-qualified topic resource name of the form
+// "projects/<project>/topics/<topic>". The caller owns the *pubsub.Client
+// lifecycle; stopping the Publisher before closing the client is recommended.
+func NewPublisher(client *pubsub.Client, topicName string) *Publisher {
+	return &Publisher{publisher: client.Publisher(topicName)}
 }
 
 // Publish marshals m.Body into a Pub/Sub message and publishes synchronously.
@@ -31,7 +33,7 @@ func (p *Publisher) Publish(ctx context.Context, m queue.Msg) error {
 	if len(m.Body) == 0 {
 		return fmt.Errorf("gcp/pubsub: publish: empty body")
 	}
-	result := p.topic.Publish(ctx, &pubsub.Message{Data: m.Body})
+	result := p.publisher.Publish(ctx, &pubsub.Message{Data: m.Body})
 	if _, err := result.Get(ctx); err != nil {
 		return fmt.Errorf("gcp/pubsub: publish: %w", err)
 	}

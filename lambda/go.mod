@@ -3,7 +3,7 @@ module github.com/devopsfactory-io/jit-runners/lambda
 go 1.26.2
 
 require (
-	cloud.google.com/go/pubsub v1.50.2
+	cloud.google.com/go/pubsub/v2 v2.4.0
 	github.com/aws/aws-lambda-go v1.54.0
 	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/aws/aws-sdk-go-v2/config v1.32.14
@@ -24,8 +24,6 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/iam v1.7.0 // indirect
-	cloud.google.com/go/longrunning v0.9.0 // indirect
-	cloud.google.com/go/pubsub/v2 v2.4.0 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.14 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.21 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.23 // indirect
