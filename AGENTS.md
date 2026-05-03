@@ -6,13 +6,17 @@ Guidance for AI coding agents working on the jit-runners project.
 
 ## Project Overview
 
-**jit-runners** provides on-demand GitHub Actions self-hosted runners using AWS Lambda (Go) and EC2 spot instances. It listens for `workflow_job` webhooks, launches ephemeral JIT runners on EC2 spot, and auto-cleans up after job completion.
+**jit-runners** provides on-demand GitHub Actions self-hosted runners deployable on AWS or GCP. It listens for `workflow_job` webhooks, launches ephemeral JIT runners on EC2 spot or GCE spot, and auto-cleans up after job completion.
 
-Three Lambda functions share code via `lambda/internal/`:
+Five serverless functions share code via `lambda/internal/`:
 
-- **webhook**: Validates signature, parses `workflow_job` event, enqueues to SQS.
-- **scaleup**: Consumes SQS messages, launches EC2 spot, generates JIT runner config, tracks state in DynamoDB.
-- **scaledown**: Cleans up stale/orphaned instances on an EventBridge schedule (every 5 minutes).
+- **webhook**: Validates the GitHub webhook signature, parses the `workflow_job` event, and routes to the jobs queue (`queued` action) or the lifecycle queue (`in_progress` / `completed` action).
+- **scaleup**: Consumes jobs-queue messages, generates a JIT runner token, and launches an EC2 spot or GCE spot VM. Tracks state in DynamoDB (AWS) or Firestore Native (GCP).
+- **scaledown**: Cleans up stale/orphaned instances on a periodic schedule (every 5 minutes); re-enqueues stuck pending runners.
+- **lifecycle**: Consumes lifecycle-queue messages, applies state transitions, deregisters runners.
+- **rebalancer**: Runs every 1 minute to detect drift between GitHub queue depth and the state store's pending count, re-publishing jobs-queue messages to recover stranded queued jobs.
+
+The cloud-agnostic interfaces (`internal/queue/`, `internal/state/`, `internal/compute/`, `internal/secrets/`) plus the `internal/provider/` factory that dispatches on `CLOUD_PROVIDER` env var allow the same five entry points to run on either cloud.
 
 **Language**: Go (see `lambda/go.mod`).
 
@@ -20,22 +24,30 @@ Three Lambda functions share code via `lambda/internal/`:
 
 ## Repository Structure
 
-- **`lambda/`** – Separate Go module for Lambda functions.
-  - **`cmd/{webhook,scaleup,scaledown}/main.go`** – Lambda entry points.
-  - **`internal/config/`** – Env + Secrets Manager config loading.
-  - **`internal/github/`** – Webhook signature verify, JWT auth, JIT runner config generation.
-  - **`internal/webhook/`** – `workflow_job` event type parsing.
-  - **`internal/ec2/`** – EC2 spot instance launcher + user-data bootstrap script.
-  - **`internal/sqs/`** – SQS publisher and message types.
-  - **`internal/runner/`** – DynamoDB state store + stale instance cleanup logic.
+- **`lambda/`** – Separate Go module for the five serverless functions.
+  - **`cmd/{webhook,scaleup,scaledown,lifecycle,rebalancer}/main.go`** – Function entry points (5 binaries).
+  - **`internal/config/`** – Env + cloud-secret-manager config loading.
+  - **`internal/github/`** – Webhook signature verify, JWT auth, JIT runner config generation. Cloud-agnostic.
+  - **`internal/webhook/`** – `workflow_job` event type parsing + routing dispatch. Cloud-agnostic.
+  - **`internal/queue/`** – Cloud-agnostic queue interfaces + typed payload helpers (`PublishScaleUp`, `ParseScaleUp`, `PublishLifecycle`, `ParseLifecycle`).
+  - **`internal/state/`** – Cloud-agnostic runner state store interface (`RunnerStore`).
+  - **`internal/compute/`** – Cloud-agnostic VM launcher interface.
+  - **`internal/secrets/`** – Cloud-agnostic secrets loader interface.
+  - **`internal/provider/`** – Bundle factory: `provider.New(ctx, name)` dispatches to AWS or GCP based on `CLOUD_PROVIDER` env var.
+  - **`internal/aws/{sqs,dynamo,ec2,secretsmanager}/`** – AWS implementations of the four cloud-agnostic interfaces.
+  - **`internal/gcp/{pubsub,firestore,gce,secretmanager,runtime}/`** – GCP implementations of the same interfaces, plus the CloudEvents HTTP entry-point shim.
+  - **`internal/runner/`** – Cleanup logic (cloud-agnostic; uses `state.RunnerStore` + `queue.Publisher`).
+  - **`internal/lifecycle/`** – Lifecycle event handler (cloud-agnostic).
+  - **`internal/rebalancer/`** – Drift-recovery cycle (cloud-agnostic).
 - **`infra/`** – Infrastructure as Code.
-  - **`terraform/`** – OpenTofu/Terraform HCL (API Gateway, Lambda, SQS, DynamoDB, EC2, IAM).
+  - **`terraform/`** – AWS OpenTofu/Terraform HCL (API Gateway, Lambda, SQS, DynamoDB, EC2, IAM).
   - **`cloudformation/`** – AWS CloudFormation template (same resources, YAML).
+  - **`terraform-gcp/`** – GCP OpenTofu/Terraform HCL (Cloud Run functions Gen 2, Pub/Sub + Eventarc + Cloud Scheduler, Firestore Native, Secret Manager, GCS, GCE, IAM). Operators set `var.release_tag` and the module fetches function source declaratively from the matching GitHub Release.
   - **`packer/`** – Packer template for building a pre-baked AL2023 runner AMI.
     - **`jit-runner.pkr.hcl`** – amazon-ebs source; `associate_public_ip_address` (conditional on `subnet_id`) and `ssh_timeout = "10m"` ensure Packer can SSH into the build instance when the default subnet does not auto-assign public IPs (fixes issue #4); AMI name format `{ami_name_prefix}-{jit_runners_version}-runner{runner_version}-{timestamp}`; tags including `jit-runners-version` and `tools` (comma-separated tool list including `git-lfs`); community AMI catalog publishing controlled by `ami_groups` (default `["all"]`, set `[]` for private); validation provisioner that fails the build if any critical tool is missing, including `docker compose version` and `docker buildx version`.
     - **`variables.pkr.hcl`** – `runner_version`, `jit_runners_version` (default `dev`; auto-detected from git in CI), `aws_region`, `ami_regions`, `ami_distribution_regions`, `ami_groups` (default `["all"]` for public; set `[]` for private PR builds), `instance_type`, `extra_script`, `ami_name_prefix`, `subnet_id`, `go_version` (default `1.23.6`), `node_major_version` (default `22`), `volume_size` (default `30` GB gp3).
     - **`scripts/setup-runner.sh`** – Orchestrator: calls 7 ordered sub-scripts (`01-system-base.sh`, `02-docker.sh`, `03-languages.sh`, `04-cloud-tools.sh`, `05-cli-tools.sh`, `06-runner-agent.sh`, `07-cleanup.sh`). Pre-installs an ubuntu-latest-like toolchain: Docker 25.x + Compose v2 + Buildx, Python 3, Node.js LTS (installed from nodejs.org binary tarball — not NodeSource RPM), Go, AWS CLI v2, kubectl, Helm 3, gh, jq, yq, git-lfs, gcc/g++/cmake, and common compression utilities. Writes `/opt/jit-runner-prebaked` marker and `/opt/jit-runner-manifest.txt` tool version manifest (includes `jit_runners_version` field).
-- **`docs/`** – Deployment guides and operational docs: GitHub App setup, Terraform guide, CloudFormation guide, troubleshooting.
+- **`docs/`** – Deployment guides and operational docs: `getting-started-aws.md` (AWS path; OpenTofu/Terraform AND CloudFormation), `getting-started-gcp.md` (GCP path; Terraform-only), GitHub App setup, troubleshooting (with both AWS and GCP-specific sections), release procedure.
 - **`Makefile`**, **`.golangci.yml`**, **`.goreleaser.yml`**, **`.github/workflows/`** – Build, test, lint, release.
 - **`.claude/agents/`** – Claude agents: documentation-maintainer (runs doc checklist after code/config/IaC/CI changes; delegate to it for README, docs/, infra/, AGENTS.md, CLAUDE.md, commands, skills), issue-reviewer, pr-reviewer (discoverable for triage and PR review), issue-writer (opens feature requests and bug reports from `/feature` and `/bug` using [.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/); drafts are validated by issue-reviewer before upload).
 - **`.claude/commands/`** – Claude slash commands: `/feature`, `/bug` (invoke the issue-writer workflow; drafts are validated by issue-reviewer before `gh issue create`).
@@ -45,7 +57,7 @@ Three Lambda functions share code via `lambda/internal/`:
 ## Setup Commands
 
 ```bash
-# Build all three Lambda binaries
+# Build all five function binaries (webhook, scaleup, scaledown, lifecycle, rebalancer)
 make lambda.build
 
 # Run tests with race detection and coverage
@@ -60,20 +72,18 @@ make lint
 # Check Go formatting
 make check-fmt
 
-# Validate Packer template
+# AWS — Pre-baked AMI build (Packer, amazon-ebs source)
 make ami.validate
+make ami.build                        # public AMI in us-east-2 (version from git)
+make ami.build-test                   # private test AMI in us-east-2
+make ami.build-distribute             # public AMI + copy to all distribution regions (US, EU, SA)
+make ami.copy AMI_ID=ami-xxxxxxxx     # copy an existing AMI to all distribution regions
 
-# Build pre-baked runner AMI in us-east-2 only (public; version from git)
-make ami.build
-
-# Build a private (non-public) test AMI in us-east-2
-make ami.build-test
-
-# Build AMI and copy to all distribution regions (US, EU, SA)
-make ami.build-distribute
-
-# Copy an existing AMI to all distribution regions
-make ami.copy AMI_ID=ami-xxxxxxxx
+# GCP — Pre-baked GCE image build (Packer, googlecompute source — same template, parallel scripts)
+make image.validate
+make image.build GCP_PROJECT=my-project          # public GCE image (multi-region distribute via separate command)
+make image.build-test GCP_PROJECT=my-project     # private test GCE image
+make image.build-distribute GCP_PROJECT=my-project   # public + multi-region storage replication
 ```
 
 Use Go version from `lambda/go.mod`. CI runs formatting check, go vet, `make lambda.test`, and golangci-lint.
@@ -106,7 +116,8 @@ Use Go version from `lambda/go.mod`. CI runs formatting check, go vet, `make lam
 - **`.github/workflows/test.yml`** – On PRs; runs formatting check (`gofmt -s`), go vet, `make lambda.test`, and golangci-lint. Self-hosted small runner.
 - **`.github/workflows/labeler.yml`** – On pull_request (opened, synchronize, reopened); runs [actions/labeler](https://github.com/actions/labeler) with [.github/labeler.yml](.github/labeler.yml). Path-based: jit-runners, lambda/go.mod, documentation. Head-branch: `feat*`→feature, `enhance*`→enhancement, `fix*` (not fix*dep*)→bug, branch containing `!`→breaking-change, `ci*`→github-actions, `(deps)`→dependencies.
 - **`.github/workflows/label-old-prs.yml`** – workflow_dispatch; applies the labeler to existing PRs (inputs: state e.g. merged/closed/all, limit). Use to backfill labels on old or merged PRs.
-- **`.github/workflows/release.yml`** – On push of tags `v*.*.*` (and workflow_dispatch); runs GoReleaser to create GitHub Release with three Lambda zip archives (webhook.zip, scaleup.zip, scaledown.zip), raw binaries, checksums, and release notes.
+- **`.github/workflows/release.yml`** – On push of tags `v*.*.*` (and workflow_dispatch); runs GoReleaser to create a GitHub Release with five function zip archives (`webhook.zip`, `scaleup.zip`, `scaledown.zip`, `lifecycle.zip`, `rebalancer.zip`), raw binaries, checksums, and release notes. The GCP Terraform module fetches these zips declaratively from the release matching `var.release_tag`.
+- **`.github/workflows/gce-image-build.yml`** – GCP GCE image build on tag push or `workflow_dispatch`. OIDC auth via `GCE_BUILD_WIF_PROVIDER` + `GCE_BUILD_SA_EMAIL` repo secrets (Workload Identity Federation set up out-of-band in the maintainer's personal GCP project per spec D14).
 - **`.github/workflows/ami-build.yml`** – workflow_dispatch (inputs: `runner_version`, `go_version`, `node_major_version`, `jit_runners_version`, `extra_script`, `distribute`), auto-trigger on version tag push (`v*`), and pull_request trigger for `infra/packer/**` changes. `jit_runners_version` is auto-detected via `git describe --tags --always` when not provided. PR builds create private (`ami_groups=[]`) AMIs with the `jit-runner-pr` name prefix, no distribution, and a post-build cleanup step that deregisters the AMI and deletes its snapshots. Non-PR builds run `packer validate` then `packer build`; when `distribute=true`, copies AMI to all distribution regions (US, EU, SA). Uses OIDC (`AMI_BUILD_ROLE_ARN` secret) to assume the build role. Writes AMI ID, jit-runners version, runner version, Go version, Node.js version, and build summary to the GitHub Actions job summary. **Runs on `ubuntu-latest` (GitHub-hosted)**: the self-hosted runner security group only allows egress on ports 443/80/53 — SSH (port 22) is blocked outbound, which causes Packer to time out when connecting to the build instance. GitHub-hosted runners have unrestricted network access and eliminate the circular dependency of building jit-runner AMIs on the jit-runners infrastructure itself.
 - **Renovate** – Dependency-update PRs (Go modules and GitHub Actions) are opened by [Renovate](https://docs.renovatebot.com/) from [.github/renovate.json5](.github/renovate.json5). Do not remove or override this config without reason.
 
@@ -142,5 +153,5 @@ Before submitting:
 - **Claude project rules**: `CLAUDE.md` – mandatory rules (DCO, Go standards, CI/release).
 - **Claude commands**: `.claude/commands/` – slash commands (`/feature`, `/bug`) that trigger the issue-writer workflow.
 - **Claude skills**: `.claude/skills/` – workflows for documentation maintenance, releases, testing, and open-pull-request.
-- **Deployment**: `docs/github-app-setup.md`, `docs/getting-started-terraform.md`, `docs/getting-started-cloudformation.md`.
+- **Deployment**: `docs/github-app-setup.md`, `docs/getting-started-aws.md`, `docs/getting-started-gcp.md`.
 - **Operations**: `docs/troubleshooting.md` – common issues (zombie runners, vCPU limits, DLQ, stale DynamoDB entries, AMI mismatch), diagnosis commands, and resolutions.
