@@ -78,4 +78,3 @@ func (c *Consumer) Ack(ctx context.Context, handle string) error {
 	}
 	return nil
 }
-

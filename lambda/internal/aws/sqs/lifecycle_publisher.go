@@ -23,6 +23,10 @@ func NewLifecyclePublisher(client Sender, queueURL string) *LifecyclePublisher {
 	return &LifecyclePublisher{client: client, queueURL: queueURL}
 }
 
+// Publish sends m.Body as the body of a new SQS message in the lifecycle queue.
+// Empty bodies are rejected so callers can distinguish accidental empty
+// publishes from genuine zero-length payloads. Use queue.PublishLifecycle for
+// the typed entry point.
 func (p *LifecyclePublisher) Publish(ctx context.Context, m queue.Msg) error {
 	if len(m.Body) == 0 {
 		return fmt.Errorf("aws/sqs: lifecycle publish: empty body")
