@@ -168,3 +168,60 @@ The previous-version objects must still exist in S3 for rollback to work — do
   include `lifecycle.zip` and do not need the `LifecycleLambdaS3Key` or
   `MaxReEnqueueAttempts` parameters. When rolling back to a pre-v1.0.0-rc.1
   release, omit those two parameters from the `update-stack` command.
+
+## 8. GCP path (parallel to steps 3-7 on AWS)
+
+The GCP rollout uses the `infra/terraform-gcp/` Terraform module deployed against a GCP project, NOT the same CloudFormation stack. AWS and GCP deployments are independent — a release applies to whichever clouds the operator chooses to upgrade.
+
+### Pre-flight
+
+```bash
+gcloud auth application-default login          # if not already done
+gcloud config set project <my-jit-runners-project>
+```
+
+### Deploy
+
+The GCP module fetches function source zips declaratively from the GitHub Release matching `var.release_tag`. There is no manual `gsutil cp` step.
+
+```bash
+cd infra/terraform-gcp
+# Edit terraform.tfvars: bump release_tag to vX.Y.Z
+tofu plan
+tofu apply
+```
+
+The first apply with a new `release_tag` triggers Cloud Build to rebuild the 5 Cloud Run function images (~5-10 min total). Subsequent applies with the same tag reuse the build.
+
+### Verify
+
+```bash
+for fn in jit-runners-webhook jit-runners-scaleup jit-runners-scaledown jit-runners-lifecycle jit-runners-rebalancer; do
+  gcloud beta run services describe "${fn}" \
+    --region=us-central1 \
+    --format='value(metadata.annotations."run.googleapis.com/lastModifier",spec.template.metadata.labels."cloud.googleapis.com/revision-name")'
+done
+```
+
+Each function should show a fresh revision-name post-apply. The rebalancer should fire every minute and emit `cycle complete repo=<owner/repo> demand=N supply=M published=K` in Cloud Logging.
+
+### Rollback
+
+If the new release misbehaves, edit `terraform.tfvars` to revert `release_tag` to the previous version and re-run `tofu apply`. The previous release's function zips are still in the GitHub Release, so the fetch chain re-downloads them. Cloud Build rebuilds the images from those zips.
+
+```bash
+# In terraform.tfvars: release_tag = "vPREV"
+tofu apply
+```
+
+### AWS + GCP combined release
+
+When releasing to BOTH clouds in the same cycle:
+
+1. Push the version tag (steps 1-2 above) once.
+2. Watch GoReleaser publish the release.
+3. Run the AWS rollout (steps 3-6 above) to update the AWS CloudFormation stack.
+4. Run the GCP rollout (this section) to update the GCP Terraform deployment.
+5. Verify each cloud independently.
+
+The two clouds can be at different `release_tag` versions during a phased rollout. There's no global ordering constraint between them.
