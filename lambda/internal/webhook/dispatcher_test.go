@@ -14,37 +14,49 @@ import (
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 )
 
-// fakeScaleUpPublisher captures the last ScaleUpMessage seen.
+// fakeScaleUpPublisher captures the last published ScaleUpMessage (decoded
+// from the generic queue.Msg body) so tests can assert on typed fields.
 type fakeScaleUpPublisher struct {
 	calls   int
 	last    *queue.ScaleUpMessage
 	failErr error
 }
 
-func (f *fakeScaleUpPublisher) PublishScaleUp(_ context.Context, msg *queue.ScaleUpMessage) error {
+func (f *fakeScaleUpPublisher) Publish(_ context.Context, m queue.Msg) error {
+	if f.failErr != nil {
+		f.calls++
+		return f.failErr
+	}
+	var msg queue.ScaleUpMessage
+	if err := json.Unmarshal(m.Body, &msg); err != nil {
+		return err
+	}
 	f.calls++
-	f.last = msg
-	return f.failErr
+	f.last = &msg
+	return nil
 }
 
 // fakeLifecyclePublisher captures the last queue.LifecycleMessage seen.
 type fakeLifecyclePublisher struct {
 	calls   int
 	last    *queue.LifecycleMessage
-	rawBody []byte // serialized round-trip, for shape assertions
+	rawBody []byte // raw body bytes, for wire-shape assertions
 	failErr error
 }
 
-func (f *fakeLifecyclePublisher) Publish(_ context.Context, msg *queue.LifecycleMessage) error {
-	f.calls++
-	f.last = msg
-	// Round-trip through JSON so tests can assert wire shape.
-	body, err := json.Marshal(msg)
-	if err != nil {
+func (f *fakeLifecyclePublisher) Publish(_ context.Context, m queue.Msg) error {
+	if f.failErr != nil {
+		f.calls++
+		return f.failErr
+	}
+	var msg queue.LifecycleMessage
+	if err := json.Unmarshal(m.Body, &msg); err != nil {
 		return err
 	}
-	f.rawBody = body
-	return f.failErr
+	f.calls++
+	f.last = &msg
+	f.rawBody = m.Body
+	return nil
 }
 
 const testSecret = "shhh"

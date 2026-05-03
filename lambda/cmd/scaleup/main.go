@@ -19,7 +19,6 @@ import (
 
 	awsdynamo "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/dynamo"
 	awsec2 "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/ec2"
-	awssqs "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/sqs"
 	awsssm "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/ssm"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/compute"
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
@@ -87,7 +86,7 @@ func handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 }
 
 func processRecord(ctx context.Context, cfg *appconfig.Config, launcher compute.Launcher, store state.RunnerStore, ssmLoader *awsssm.Loader, record events.SQSMessage) error {
-	msg, err := awssqs.ParseMessage(record.Body)
+	msg, err := queue.ParseScaleUp([]byte(record.Body))
 	if err != nil {
 		log.Printf("parse SQS message: %v", err)
 		return nil // don't retry malformed messages

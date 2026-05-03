@@ -2,6 +2,7 @@ package rebalancer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -26,11 +27,15 @@ type fakePub struct {
 	err       error
 }
 
-func (f *fakePub) PublishScaleUp(_ context.Context, m *queue.ScaleUpMessage) error {
+func (f *fakePub) Publish(_ context.Context, m queue.Msg) error {
 	if f.err != nil {
 		return f.err
 	}
-	f.published = append(f.published, m)
+	var msg queue.ScaleUpMessage
+	if err := json.Unmarshal(m.Body, &msg); err != nil {
+		return err
+	}
+	f.published = append(f.published, &msg)
 	return nil
 }
 

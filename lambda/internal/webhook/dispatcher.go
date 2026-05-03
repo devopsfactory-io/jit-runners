@@ -9,16 +9,15 @@ import (
 )
 
 // scaleUpPublisher is the minimal surface the Handler needs from a
-// scale-up queue publisher. *aws/sqs.Publisher satisfies this via its
-// PublishScaleUp helper.
+// scale-up queue publisher. Satisfied by queue.Publisher (any cloud).
 type scaleUpPublisher interface {
-	PublishScaleUp(ctx context.Context, msg *queue.ScaleUpMessage) error
+	Publish(ctx context.Context, m queue.Msg) error
 }
 
 // lifecyclePublisher is the minimal surface the Handler needs from the
-// lifecycle queue publisher. *aws/sqs.LifecyclePublisher satisfies this.
+// lifecycle queue publisher. Satisfied by queue.Publisher (any cloud).
 type lifecyclePublisher interface {
-	Publish(ctx context.Context, msg *queue.LifecycleMessage) error
+	Publish(ctx context.Context, m queue.Msg) error
 }
 
 // Handler dispatches GitHub workflow_job webhook events to the correct
@@ -102,7 +101,7 @@ func (h *Handler) handleQueued(ctx context.Context, result *ParseResult) Respons
 		InstallationID: result.Event.Installation.ID,
 		Source:         queue.SourceWebhook,
 	}
-	if err := h.ScaleUpPublisher.PublishScaleUp(ctx, msg); err != nil {
+	if err := queue.PublishScaleUp(ctx, h.ScaleUpPublisher, msg); err != nil {
 		return Response{Status: 500, Body: "Queue error"}
 	}
 	return Response{Status: 200, Body: "OK"}
@@ -127,7 +126,7 @@ func (h *Handler) handleLifecycle(ctx context.Context, result *ParseResult) Resp
 		Action:     result.Action,
 		Conclusion: result.Event.WorkflowJob.Conclusion,
 	}
-	if err := h.LifecyclePublisher.Publish(ctx, msg); err != nil {
+	if err := queue.PublishLifecycle(ctx, h.LifecyclePublisher, msg); err != nil {
 		return Response{Status: 500, Body: "Queue error"}
 	}
 	return Response{Status: 202, Body: "Accepted"}

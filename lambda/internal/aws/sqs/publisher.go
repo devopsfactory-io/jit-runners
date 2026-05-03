@@ -4,7 +4,6 @@ package sqs
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -52,18 +51,4 @@ func (p *Publisher) Publish(ctx context.Context, m queue.Msg) error {
 		return fmt.Errorf("send SQS message: %w", err)
 	}
 	return nil
-}
-
-// PublishScaleUp marshals msg and publishes it via Publish. Provided as a
-// typed convenience for callers (webhook dispatcher, scaledown re-enqueue)
-// that already speak in *queue.ScaleUpMessage rather than queue.Msg.
-func (p *Publisher) PublishScaleUp(ctx context.Context, msg *queue.ScaleUpMessage) error {
-	if msg == nil {
-		return fmt.Errorf("ScaleUpMessage is nil")
-	}
-	body, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("marshal scale-up message: %w", err)
-	}
-	return p.Publish(ctx, queue.Msg{Body: body})
 }

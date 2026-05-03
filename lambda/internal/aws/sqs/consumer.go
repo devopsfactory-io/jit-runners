@@ -2,7 +2,6 @@ package sqs
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -80,20 +79,3 @@ func (c *Consumer) Ack(ctx context.Context, handle string) error {
 	return nil
 }
 
-// ParseMessage deserializes an SQS message body into a ScaleUpMessage.
-func ParseMessage(body string) (*queue.ScaleUpMessage, error) {
-	var msg queue.ScaleUpMessage
-	if err := json.Unmarshal([]byte(body), &msg); err != nil {
-		return nil, fmt.Errorf("unmarshal SQS message: %w", err)
-	}
-	if msg.JobID == 0 {
-		return nil, fmt.Errorf("SQS message missing job_id")
-	}
-	if msg.RepositoryFull == "" {
-		return nil, fmt.Errorf("SQS message missing repository_full")
-	}
-	if msg.InstallationID == 0 {
-		return nil, fmt.Errorf("SQS message missing installation_id")
-	}
-	return &msg, nil
-}

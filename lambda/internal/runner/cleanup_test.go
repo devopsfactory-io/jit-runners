@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -87,15 +88,23 @@ func (f *fakeGitHub) DeregisterRunner(_ context.Context, repo string, runnerID i
 	return f.err
 }
 
-// fakePub records published ScaleUp messages and may inject an error.
+// fakePub records published ScaleUp messages (decoded from queue.Msg bodies)
+// and may inject an error.
 type fakePub struct {
 	msgs []*queue.ScaleUpMessage
 	err  error
 }
 
-func (f *fakePub) PublishScaleUp(_ context.Context, m *queue.ScaleUpMessage) error {
-	f.msgs = append(f.msgs, m)
-	return f.err
+func (f *fakePub) Publish(_ context.Context, m queue.Msg) error {
+	if f.err != nil {
+		return f.err
+	}
+	var msg queue.ScaleUpMessage
+	if err := json.Unmarshal(m.Body, &msg); err != nil {
+		return err
+	}
+	f.msgs = append(f.msgs, &msg)
+	return nil
 }
 
 // helpers ---------------------------------------------------------------

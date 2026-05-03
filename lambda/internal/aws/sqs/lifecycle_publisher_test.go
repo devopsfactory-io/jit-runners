@@ -51,7 +51,7 @@ func TestLifecyclePublisher_Publish(t *testing.T) {
 			mock := &mockSQSSender{err: tt.sendErr}
 			pub := NewLifecyclePublisher(mock, "https://sqs.us-east-1.amazonaws.com/123456789/lifecycle-queue")
 
-			err := pub.Publish(context.Background(), tt.msg)
+			err := queue.PublishLifecycle(context.Background(), pub, tt.msg)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")

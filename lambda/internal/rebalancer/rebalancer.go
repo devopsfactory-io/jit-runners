@@ -21,10 +21,10 @@ type QueueLister interface {
 	ListQueuedWorkflowJobs(ctx context.Context, ownerRepo string) ([]github.QueuedJob, error)
 }
 
-// ScaleUpPublisher is the narrow SQS publisher surface. Satisfied by
-// *aws/sqs.Publisher via its PublishScaleUp helper.
+// ScaleUpPublisher is the narrow queue publisher surface. Satisfied by
+// queue.Publisher (any cloud).
 type ScaleUpPublisher interface {
-	PublishScaleUp(ctx context.Context, msg *queue.ScaleUpMessage) error
+	Publish(ctx context.Context, m queue.Msg) error
 }
 
 // Rebalance computes per-label-set demand from GitHub and supply from DDB
@@ -73,7 +73,7 @@ func Rebalance(ctx context.Context, gh QueueLister, store state.RunnerStore, pub
 				InstallationID: installationID,
 				Source:         queue.SourceRebalancer,
 			}
-			if err := pub.PublishScaleUp(ctx, msg); err != nil {
+			if err := queue.PublishScaleUp(ctx, pub, msg); err != nil {
 				publishErrs = append(publishErrs, fmt.Errorf("publish for labels %v: %w", g.labels, err))
 				continue
 			}
