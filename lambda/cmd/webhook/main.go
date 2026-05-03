@@ -105,7 +105,7 @@ func gcpHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := h.Handle(r.Context(), eventType, sig, body)
 	if resp.Status >= 500 {
-		log.Printf("gcpHTTPHandler: handle webhook status=%d body=%q", resp.Status, resp.Body)
+		log.Printf("gcpHTTPHandler: handle webhook status=%d", resp.Status)
 	}
 	w.WriteHeader(resp.Status)
 	if _, werr := w.Write([]byte(resp.Body)); werr != nil { //nolint:gosec // G705: resp.Body is a fixed literal from webhook.Handler.Handle, not user-controlled
