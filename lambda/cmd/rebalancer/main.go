@@ -92,11 +92,11 @@ func handler(ctx context.Context) error {
 	var errCount int
 	for _, repo := range repos {
 		if err := rebalancer.Rebalance(ctx, ghClient, bundleRef.State, bundleRef.JobsPublisher, repo, cfg.InstallationID); err != nil {
-			log.Printf("rebalancer: cycle error repo=%s: %v", repo, err)
+			log.Printf("rebalancer: cycle error repo=%s: %v", repo, err) //nolint:gosec // G706: repo is from internal State.ListActiveRepos (DDB scan), err from internal operations — not user input
 			errCount++
 		}
 	}
-	log.Printf("rebalancer: tick complete repos=%d errors=%d", len(repos), errCount)
+	log.Printf("rebalancer: tick complete repos=%d errors=%d", len(repos), errCount) //nolint:gosec // G706: repos length and errCount are internal integer counters — not user input
 	return nil
 }
 

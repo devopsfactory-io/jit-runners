@@ -81,7 +81,7 @@ func handler(ctx context.Context) error {
 		return fmt.Errorf("cleanup: %w", err)
 	}
 
-	log.Printf("cleanup complete: stale=%d orphans=%d errors=%d",
+	log.Printf("cleanup complete: stale=%d orphans=%d errors=%d", //nolint:gosec // G706: counters are internal cleanup-result fields from runner.Cleaner — not user input
 		result.Stale, result.Orphans, result.Errors)
 	return nil
 }
