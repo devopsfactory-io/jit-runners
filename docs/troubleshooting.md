@@ -696,3 +696,165 @@ If drift recovery feels too slow, the cadence can be tightened (subject to AWS::
 
 - Issue [#62](https://github.com/devopsfactory-io/jit-runners/issues/62) — diagnosis and design.
 - Spec: `repositories/zettelkasten/Projects/jit-runners/specs/2026-05-02-effective-scaleup-design.md`.
+
+## GCP-specific issues
+
+The following symptoms are GCP-specific. AWS-only operators can skip this section.
+
+### Cloud Build stuck in BUILDING state
+
+#### Symptom
+
+After `tofu apply`, one or more Cloud Run functions show `LastUpdateStatus: Pending` or never reach `Ready`. Cloud Build is rebuilding the function image and either hanging or failing.
+
+#### Diagnosis
+
+```bash
+gcloud builds list --filter="source.storageSource.bucket~jit-runners-functions" --limit=5
+gcloud builds log <build-id>
+```
+
+#### Common causes
+
+- **First-apply timing**: Buildpacks build can take 5-10 minutes per function on first deploy. Wait it out before declaring failure.
+- **Insufficient quota**: Cloud Build has per-project concurrency limits. Check quotas at `https://console.cloud.google.com/iam-admin/quotas` filtered to `cloudbuild.googleapis.com`.
+- **Bad Go module fetch**: Cloud Build cannot reach the Go module proxy from the build VM if egress is heavily restricted. Default Cloud Build VPC egress works fine; investigate only if you've customized.
+
+#### Resolution
+
+If a build is genuinely hung (>20 min), cancel it and re-trigger:
+
+```bash
+gcloud builds cancel <build-id>
+cd infra/terraform-gcp
+tofu apply -replace='google_cloudfunctions2_function.<func>'
+```
+
+### Eventarc trigger not delivering messages
+
+#### Symptom
+
+Pub/Sub messages publish to `${prefix}-jobs` or `${prefix}-lifecycle` topics, but the corresponding scaleup/lifecycle Cloud Run functions never invoke. Per-topic message backlog grows.
+
+#### Diagnosis
+
+```bash
+# Check trigger health
+gcloud eventarc triggers describe ${prefix}-scaleup --location=us-central1
+gcloud eventarc triggers describe ${prefix}-lifecycle --location=us-central1
+
+# Check the bound subscription's backlog
+gcloud pubsub subscriptions describe ${prefix}-jobs-scaleup \
+  --format='value(numUndeliveredMessages,deliveryAttempts)'
+```
+
+#### Common causes
+
+- **Eventarc bound to a different subscription** (D13 verification gap). The trigger may be using its own auto-created managed subscription, not the explicit one declared in `pubsub.tf`. The DLQ + retry policy on the explicit sub doesn't apply.
+- **Eventarc invoker SA missing `roles/run.invoker`**: usually self-correcting since `eventarc.tf` declares the binding. Verify with:
+
+  ```bash
+  gcloud run services get-iam-policy ${prefix}-scaleup --region=us-central1
+  ```
+
+#### Resolution
+
+If Eventarc is using its own managed subscription, the workaround is to inspect failed messages via the inspector subscription on the topic and accept that the explicit DLQ + retry policy isn't on the active path:
+
+```bash
+gcloud pubsub subscriptions pull ${prefix}-jobs-dlq-inspector --auto-ack --limit=10
+```
+
+For a fix, file a follow-up issue and consider switching to bare push subscriptions (the alternative D3 path).
+
+### Firestore singleton conflict
+
+#### Symptom
+
+`tofu apply` fails on `google_firestore_database.default` with a 409 Conflict or "database already exists" error.
+
+#### Root cause
+
+Firestore Native is a project-level singleton. The module's `var.create_firestore_database` flag was left at the default `false`, but no Firestore database actually exists in the project. OR the flag is `true` but a database already exists.
+
+#### Resolution
+
+If the project has no Firestore yet:
+
+```bash
+# In terraform.tfvars: create_firestore_database = true
+tofu apply
+```
+
+If the project already has Firestore:
+
+```bash
+# In terraform.tfvars: create_firestore_database = false
+tofu apply
+```
+
+The `google_firestore_field` TTL policy works against the singleton database regardless of who created it, so flipping this flag in either direction is safe.
+
+### Function source bucket out of date
+
+#### Symptom
+
+After bumping `var.release_tag`, the Cloud Run functions still serve the old version. `gcloud beta run services describe` shows the prior revision.
+
+#### Diagnosis
+
+```bash
+gcloud storage ls gs://${prefix}-functions-*/${var.release_tag}/
+```
+
+If this returns "no objects found", the `data.http` → `local_file` → `google_storage_bucket_object` chain failed to populate the new tag's prefix.
+
+#### Common causes
+
+- **GitHub Release missing the zip**: the release's assets must include `webhook.zip`, `scaleup.zip`, `scaledown.zip`, `lifecycle.zip`, `rebalancer.zip`. Verify at `https://github.com/devopsfactory-io/jit-runners/releases/tag/<tag>`.
+- **Network failure during `tofu plan`**: `data.http` re-fetches each plan; transient network errors fail plan. Re-run.
+- **GitHub rate limit**: unauthenticated GitHub fetches are rate-limited. If apply runs many times in a short window, you may hit the limit. Wait or authenticate via `var.github_token`.
+
+#### Resolution
+
+Force re-fetch:
+
+```bash
+cd infra/terraform-gcp
+rm -rf .cache/<release_tag>      # clear the local Terraform-managed cache
+tofu apply -replace='local_file.function_zips["webhook"]'
+# Repeat for the 4 other functions if needed
+```
+
+### Workload Identity Federation auth failure in CI
+
+#### Symptom
+
+`.github/workflows/gce-image-build.yml` fails at the "Authenticate to Google Cloud" step with `permission_denied` or `invalid_grant`.
+
+#### Root cause
+
+Per spec D14, image-build CI auth uses Workload Identity Federation in the maintainer's personal GCP project, set up out-of-band. The repo secrets `GCE_BUILD_WIF_PROVIDER` and `GCE_BUILD_SA_EMAIL` must be populated for the workflow to authenticate.
+
+#### Resolution
+
+If you're a maintainer who hasn't run the gcloud bootstrap yet:
+
+1. Set up a Workload Identity Pool + Provider in your personal GCP project.
+2. Create a service account with `compute.imageUser`, `compute.instanceAdmin.v1`, `iam.serviceAccountUser` roles bound to the Pool.
+3. Set repo secrets:
+
+   ```bash
+   gh secret set GCE_BUILD_WIF_PROVIDER --body "projects/<num>/locations/global/workloadIdentityPools/jit-runners-build/providers/github"
+   gh secret set GCE_BUILD_SA_EMAIL --body "[email protected]"
+   ```
+
+If you're a fork maintainer who wants their own image build pipeline: do the same in your fork's project, set your fork's repo secrets, and the workflow runs against your project.
+
+### References
+
+- Spec D3 (Eventarc + CloudEvents internal-only ingress).
+- Spec D11 (GitHub Releases as source of truth via `data.http`).
+- Spec D12 (Firestore singleton feature flag).
+- Spec D13 (Pre-created Pub/Sub subscriptions verification step).
+- Spec D14 (Image-build CI identity is out-of-band).
