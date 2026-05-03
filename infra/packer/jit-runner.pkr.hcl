@@ -4,6 +4,10 @@ packer {
       version = ">= 1.3.0"
       source  = "github.com/hashicorp/amazon"
     }
+    googlecompute = {
+      version = ">= 1.1.0"
+      source  = "github.com/hashicorp/googlecompute"
+    }
   }
 }
 
@@ -63,8 +67,34 @@ source "amazon-ebs" "jit-runner" {
   }
 }
 
+source "googlecompute" "jit-runner" {
+  project_id   = var.gcp_project
+  zone         = var.gcp_zone
+  machine_type = var.gcp_machine_type
+
+  source_image_family = var.gcp_source_image_family
+  ssh_username        = "packer"
+  ssh_timeout         = "10m"
+
+  image_name              = "${var.ami_name_prefix}-${replace(var.jit_runners_version, ".", "-")}-runner${replace(var.runner_version, ".", "-")}-{{timestamp}}"
+  image_family            = "jit-runner"
+  image_storage_locations = var.gcp_image_storage_locations
+
+  disk_size = var.volume_size
+
+  image_labels = {
+    "runner-version"      = replace(var.runner_version, ".", "-")
+    "jit-runners-version" = replace(var.jit_runners_version, ".", "-")
+    "project"             = "jit-runners"
+    "managed-by"          = "packer"
+  }
+}
+
 build {
-  sources = ["source.amazon-ebs.jit-runner"]
+  sources = [
+    "source.amazon-ebs.jit-runner",
+    "source.googlecompute.jit-runner",
+  ]
 
   # Create destination directory for provisioning scripts
   provisioner "shell" {
