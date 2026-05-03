@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -10,18 +11,21 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go-v2/config"
-	awssqssdk "github.com/aws/aws-sdk-go-v2/service/sqs"
 
-	awssqs "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/sqs"
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/provider"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/webhook"
 )
 
 var (
-	cfgOnce     sync.Once
-	appCfg      *appconfig.Config
-	cfgErr      error
+	cfgOnce sync.Once
+	appCfg  *appconfig.Config
+	cfgErr  error
+
+	bundleOnce sync.Once
+	bundleRef  *provider.Bundle
+	bundleErr  error
+
 	handlerOnce sync.Once
 	wHandler    *webhook.Handler
 	handlerErr  error
@@ -31,7 +35,6 @@ func main() {
 	lambda.Start(handler)
 }
 
-// TODO(phase B): replace direct AWS wiring with provider.New(provider.AWS|GCP).
 func handler(ctx context.Context, req events.LambdaFunctionURLRequest) (events.LambdaFunctionURLResponse, error) {
 	if req.RequestContext.HTTP.Method != "POST" {
 		return response(405, "Method Not Allowed"), nil
@@ -71,38 +74,23 @@ func loadConfig(ctx context.Context) (*appconfig.Config, error) {
 }
 
 // loadHandler builds the webhook.Handler exactly once per Lambda container.
-// Both publishers are wired here:
-//
-//   - scale-up:  SQS_QUEUE_URL          -> aws/sqs.Publisher
-//   - lifecycle: LIFECYCLE_QUEUE_URL    -> aws/sqs.LifecyclePublisher
-//
-// LIFECYCLE_QUEUE_URL is required for the in_progress/completed dispatch
-// path added in #47; absent it, lifecycle requests will return 500 from the
-// handler. We surface the missing-env case as a config error here so the
-// Lambda fails fast on cold start when misconfigured.
+// Both publishers are obtained from the cloud-agnostic provider.Bundle so
+// that the same binary works with AWS (SQS) and GCP (Pub/Sub).
 func loadHandler(ctx context.Context) (*webhook.Handler, error) {
 	handlerOnce.Do(func() {
 		cfg, err := loadConfig(ctx)
 		if err != nil {
-			handlerErr = err
+			handlerErr = fmt.Errorf("load config: %w", err)
 			return
 		}
-		awsCfg, err := config.LoadDefaultConfig(ctx)
-		if err != nil {
-			handlerErr = err
+		bundleOnce.Do(func() {
+			bundleRef, bundleErr = provider.New(ctx, os.Getenv("CLOUD_PROVIDER"))
+		})
+		if bundleErr != nil {
+			handlerErr = fmt.Errorf("provider.New: %w", bundleErr)
 			return
 		}
-		client := awssqssdk.NewFromConfig(awsCfg)
-		scaleUpPub := awssqs.NewPublisher(client, cfg.QueueURL)
-
-		lifecycleURL := os.Getenv("LIFECYCLE_QUEUE_URL")
-		if lifecycleURL == "" {
-			log.Printf("LIFECYCLE_QUEUE_URL is empty: lifecycle events will return 500 until set")
-			wHandler = webhook.NewHandler(scaleUpPub, nil, []byte(cfg.WebhookSecret))
-			return
-		}
-		lifecyclePub := awssqs.NewLifecyclePublisher(client, lifecycleURL)
-		wHandler = webhook.NewHandler(scaleUpPub, lifecyclePub, []byte(cfg.WebhookSecret))
+		wHandler = webhook.NewHandler(bundleRef.JobsPublisher, bundleRef.LifecyclePublisher, []byte(cfg.WebhookSecret))
 	})
 	return wHandler, handlerErr
 }
