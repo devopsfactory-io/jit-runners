@@ -10,16 +10,13 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	awsec2sdk "github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/google/uuid"
 
-	awsdynamo "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/dynamo"
 	awsec2 "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/ec2"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/compute"
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/provider"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/runner"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
@@ -38,32 +35,31 @@ var (
 	cfgOnce sync.Once
 	appCfg  *appconfig.Config
 	cfgErr  error
+
+	bundleOnce sync.Once
+	bundleRef  *provider.Bundle
+	bundleErr  error
 )
 
 func main() {
 	lambda.Start(handler)
 }
 
-// TODO(phase B): replace direct AWS wiring with provider.New(provider.AWS|GCP).
 func handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 	cfg, err := loadConfig(ctx)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	awsCfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		return fmt.Errorf("load AWS config: %w", err)
+	bundleOnce.Do(func() {
+		bundleRef, bundleErr = provider.New(ctx, os.Getenv("CLOUD_PROVIDER"))
+	})
+	if bundleErr != nil {
+		return fmt.Errorf("provider.New: %w", bundleErr)
 	}
 
-	launcher := awsec2.NewLauncher(awsec2sdk.NewFromConfig(awsCfg), awsec2.LauncherOptions{
-		SecurityGroupID:    cfg.SecurityGroupID,
-		IAMInstanceProfile: cfg.IAMInstanceProfile,
-	})
-	store := awsdynamo.NewStore(dynamodb.NewFromConfig(awsCfg), cfg.TableName)
-
 	for _, record := range sqsEvent.Records {
-		if err := processRecord(ctx, cfg, launcher, store, record); err != nil {
+		if err := processRecord(ctx, cfg, bundleRef, record); err != nil {
 			log.Printf("error processing record %s: %v", record.MessageId, err)
 			return err
 		}
@@ -71,7 +67,7 @@ func handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 	return nil
 }
 
-func processRecord(ctx context.Context, cfg *appconfig.Config, launcher compute.Launcher, store state.RunnerStore, record events.SQSMessage) error {
+func processRecord(ctx context.Context, cfg *appconfig.Config, b *provider.Bundle, record events.SQSMessage) error {
 	msg, err := queue.ParseScaleUp([]byte(record.Body))
 	if err != nil {
 		log.Printf("parse SQS message: %v", err)
@@ -90,7 +86,7 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, launcher compute.
 	// no future reader assumes a binding to job_id or workflow_run_id.
 	ghClient := github.NewClient(token)
 
-	launch, err := shouldLaunch(ctx, ghClient, store, msg)
+	launch, err := shouldLaunch(ctx, ghClient, b.State, msg)
 	if err != nil {
 		return fmt.Errorf("scaleup decision: %w", err)
 	}
@@ -115,7 +111,7 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, launcher compute.
 	// WorkflowRunID are observability metadata, never lookup keys.
 	pending := runner.New(msg.RepositoryFull, jitCfg.Runner.ID, "", msg.JobID, msg.RunID, msg.Labels)
 	pending.ReEnqueueAttempts = msg.ReEnqueueAttempts
-	if err := writePendingRecord(ctx, ghClient, store, msg, pending); err != nil {
+	if err := writePendingRecord(ctx, ghClient, b.State, msg, pending); err != nil {
 		return err
 	}
 
@@ -133,7 +129,7 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, launcher compute.
 		RunnerID:      jitCfg.Runner.ID,
 	})
 	if err != nil {
-		markLaunchFailed(ctx, ghClient, store, msg, pending.ID, jitCfg.Runner.ID)
+		markLaunchFailed(ctx, ghClient, b.State, msg, pending.ID, jitCfg.Runner.ID)
 		return fmt.Errorf("generate user-data: %w", err)
 	}
 
@@ -153,9 +149,9 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, launcher compute.
 		RunnerID:     pending.ID,
 	}
 
-	inst, err := launcher.Launch(ctx, spec)
+	inst, err := b.Compute.Launch(ctx, spec)
 	if err != nil {
-		markLaunchFailed(ctx, ghClient, store, msg, pending.ID, jitCfg.Runner.ID)
+		markLaunchFailed(ctx, ghClient, b.State, msg, pending.ID, jitCfg.Runner.ID)
 		return fmt.Errorf("launch instance: %w", err)
 	}
 
@@ -163,7 +159,7 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, launcher compute.
 	// pending record. The record stays in StatusPending; the runner agent
 	// on the instance will flip it to running via the lifecycle pipeline.
 	now := time.Now()
-	if err := store.Update(ctx, pending.ID, state.RunnerUpdate{
+	if err := b.State.Update(ctx, pending.ID, state.RunnerUpdate{
 		InstanceID:    &inst.ID,
 		LastAttemptAt: &now,
 	}); err != nil {

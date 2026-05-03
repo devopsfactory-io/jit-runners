@@ -13,6 +13,7 @@ import (
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/compute"
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/provider"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/runner"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
@@ -44,15 +45,17 @@ func (f *fakeLauncher) ListStale(_ context.Context, _ time.Duration) ([]compute.
 // API calls, no DDB writes. processRecord returns nil so SQS does not retry.
 func TestProcessRecord_ParseFailureIsNoOp(t *testing.T) {
 	cfg := &appconfig.Config{}
-	launcher := &fakeLauncher{}
-	store := memstore.New()
+	b := &provider.Bundle{
+		State:   memstore.New(),
+		Compute: &fakeLauncher{},
+	}
 
 	rec := events.SQSMessage{Body: "{not json"}
-	if err := processRecord(context.Background(), cfg, launcher, store, rec); err != nil {
+	if err := processRecord(context.Background(), cfg, b, rec); err != nil {
 		t.Fatalf("processRecord on bad JSON should return nil to avoid retry; got %v", err)
 	}
-	if len(launcher.launches) != 0 {
-		t.Errorf("expected no launches, got %d", len(launcher.launches))
+	if len(b.Compute.(*fakeLauncher).launches) != 0 {
+		t.Errorf("expected no launches, got %d", len(b.Compute.(*fakeLauncher).launches))
 	}
 }
 
