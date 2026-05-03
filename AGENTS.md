@@ -43,14 +43,16 @@ The cloud-agnostic interfaces (`internal/queue/`, `internal/state/`, `internal/c
   - **`terraform/`** – AWS OpenTofu/Terraform HCL (API Gateway, Lambda, SQS, DynamoDB, EC2, IAM).
   - **`cloudformation/`** – AWS CloudFormation template (same resources, YAML).
   - **`terraform-gcp/`** – GCP OpenTofu/Terraform HCL (Cloud Run functions Gen 2, Pub/Sub + Eventarc + Cloud Scheduler, Firestore Native, Secret Manager, GCS, GCE, IAM). Operators set `var.release_tag` and the module fetches function source declaratively from the matching GitHub Release.
-  - **`packer/`** – Packer template for building a pre-baked AL2023 runner AMI.
-    - **`jit-runner.pkr.hcl`** – amazon-ebs source; `associate_public_ip_address` (conditional on `subnet_id`) and `ssh_timeout = "10m"` ensure Packer can SSH into the build instance when the default subnet does not auto-assign public IPs (fixes issue #4); AMI name format `{ami_name_prefix}-{jit_runners_version}-runner{runner_version}-{timestamp}`; tags including `jit-runners-version` and `tools` (comma-separated tool list including `git-lfs`); community AMI catalog publishing controlled by `ami_groups` (default `["all"]`, set `[]` for private); validation provisioner that fails the build if any critical tool is missing, including `docker compose version` and `docker buildx version`.
-    - **`variables.pkr.hcl`** – `runner_version`, `jit_runners_version` (default `dev`; auto-detected from git in CI), `aws_region`, `ami_regions`, `ami_distribution_regions`, `ami_groups` (default `["all"]` for public; set `[]` for private PR builds), `instance_type`, `extra_script`, `ami_name_prefix`, `subnet_id`, `go_version` (default `1.23.6`), `node_major_version` (default `22`), `volume_size` (default `30` GB gp3).
-    - **`scripts/setup-runner.sh`** – Orchestrator: calls 7 ordered sub-scripts (`01-system-base.sh`, `02-docker.sh`, `03-languages.sh`, `04-cloud-tools.sh`, `05-cli-tools.sh`, `06-runner-agent.sh`, `07-cleanup.sh`). Pre-installs an ubuntu-latest-like toolchain: Docker 25.x + Compose v2 + Buildx, Python 3, Node.js LTS (installed from nodejs.org binary tarball — not NodeSource RPM), Go, AWS CLI v2, kubectl, Helm 3, gh, jq, yq, git-lfs, gcc/g++/cmake, and common compression utilities. Writes `/opt/jit-runner-prebaked` marker and `/opt/jit-runner-manifest.txt` tool version manifest (includes `jit_runners_version` field).
+  - **`packer/`** – Shared Packer template for building pre-baked runner images. The same template builds either an Amazon Linux 2023 AMI (`amazon-ebs` source) on AWS or an Ubuntu 24.04 LTS GCE image (`googlecompute` source) on GCP.
+    - **`jit-runner.pkr.hcl`** – Two parallel sources (`amazon-ebs` and `googlecompute`); shared post-processors and provisioners; cloud-specific `extra_script` slots; image name format `{name_prefix}-{jit_runners_version}-runner{runner_version}-{timestamp}`; community AMI catalog publishing controlled by `ami_groups` (default `["all"]`, set `[]` for private); validation provisioner that fails the build if any critical tool is missing, including `docker compose version` and `docker buildx version`.
+    - **`variables.pkr.hcl`** – Shared variables: `runner_version`, `jit_runners_version` (default `dev`; auto-detected from git in CI), `go_version` (default `1.23.6`), `node_major_version` (default `22`); plus AWS-specific (`aws_region`, `ami_regions`, `ami_distribution_regions`, `ami_groups`, `instance_type`, `subnet_id`, `volume_size`) and GCP-specific (`gcp_project`, `gcp_zone`, `gcp_machine_type`, `gcp_image_storage_locations`) knobs.
+    - **`scripts/aws/`** – AWS Amazon Linux 2023 provisioning: orchestrator + 7 ordered sub-scripts (`01-system-base.sh` … `07-cleanup.sh`). Pre-installs an ubuntu-latest-like toolchain on AL2023.
+    - **`scripts/gcp/`** – GCP Ubuntu 24.04 LTS provisioning: parallel orchestrator + sub-scripts targeting Ubuntu rather than AL2023. Same logical toolchain (Docker, languages, cloud CLIs incl. `gcloud`) installed via apt + curl rather than dnf.
+    - Both pipelines write `/opt/jit-runner-prebaked` marker and `/opt/jit-runner-manifest.txt` tool version manifest (includes `jit_runners_version` field).
 - **`docs/`** – Deployment guides and operational docs: `getting-started-aws.md` (AWS path; OpenTofu/Terraform AND CloudFormation), `getting-started-gcp.md` (GCP path; Terraform-only), GitHub App setup, troubleshooting (with both AWS and GCP-specific sections), release procedure.
 - **`Makefile`**, **`.golangci.yml`**, **`.goreleaser.yml`**, **`.github/workflows/`** – Build, test, lint, release.
-- **`.claude/agents/`** – Claude agents: documentation-maintainer (runs doc checklist after code/config/IaC/CI changes; delegate to it for README, docs/, infra/, AGENTS.md, CLAUDE.md, commands, skills), issue-reviewer, pr-reviewer (discoverable for triage and PR review), issue-writer (opens feature requests and bug reports from `/feature` and `/bug` using [.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/); drafts are validated by issue-reviewer before upload).
-- **`.claude/commands/`** – Claude slash commands: `/feature`, `/bug` (invoke the issue-writer workflow; drafts are validated by issue-reviewer before `gh issue create`).
+- **`.claude/skills/`** – Project-local Claude skills (workflows): `maintain-documentation/`, `open-pull-request/`, `release-and-versioning/`, `testing-and-ci/`.
+- **`.claude/commands/`** – Claude slash commands: `/feature`, `/bug` (invoke the issue-writer workflow; drafts are validated by issue-reviewer before `gh issue create`). Hub-side agents (documentation-maintainer, issue-reviewer, issue-writer, pr-reviewer, etc.) live in the `code-agent-hub` repo and operate against this repo via the project skills above.
 
 ---
 
@@ -97,7 +99,7 @@ Use Go version from `lambda/go.mod`. CI runs formatting check, go vet, `make lam
 - **Packages**: Code under `lambda/internal/` must not be imported from outside the lambda module.
 - **Errors**: Return errors with context (e.g. `fmt.Errorf("...: %w", err)`); avoid naked returns.
 - **Exports**: Public functions and types should have doc comments starting with the name.
-- **AWS interfaces**: Define interfaces for AWS service clients (EC2, SQS, DynamoDB) to enable testing with mocks.
+- **Cloud-service interfaces**: Define interfaces for cloud service clients (AWS: EC2/SQS/DynamoDB/SecretsManager; GCP: Compute/PubSub/Firestore/SecretManager) to enable testing with mocks. The cloud-agnostic interfaces live in `internal/queue|state|compute|secrets/`.
 
 ---
 
@@ -106,8 +108,8 @@ Use Go version from `lambda/go.mod`. CI runs formatting check, go vet, `make lam
 - **Run**: `cd lambda && go test ./...` or `make lambda.test`.
 - **Location**: Place `*_test.go` next to the code under test (same package).
 - **Coverage**: Existing tests cover `lambda/internal/github`. Add tests for new behavior.
-- **No external services**: Unit tests should not require live AWS APIs; mock via interfaces.
-- **Mocking**: AWS clients must implement interfaces so tests can inject mock implementations.
+- **No external services**: Unit tests should not require live AWS or GCP APIs; mock via the cloud-agnostic interfaces.
+- **Mocking**: AWS and GCP clients must implement the cloud-agnostic interfaces (`queue.Publisher`, `state.RunnerStore`, `compute.Launcher`, `secrets.Loader`) so tests can inject mock implementations regardless of cloud.
 
 ---
 
@@ -129,7 +131,7 @@ Semantic versioning: use tags like `v0.1.0`.
 
 After any change that affects behavior, APIs, IaC, config, or CI:
 
-1. **Delegate**: Delegate documentation updates to the **documentation-maintainer** subagent (`.claude/agents/documentation-maintainer.md`) so it runs the full maintain-documentation checklist (README, docs/, infra/, AGENTS.md, CLAUDE.md, .claude/commands, .claude/skills).
+1. **Delegate**: Delegate documentation updates to the hub-side **documentation-maintainer** subagent (lives in `code-agent-hub`'s `.claude/agents/`) so it runs the full maintain-documentation checklist (README, docs/, infra/, AGENTS.md, CLAUDE.md, .claude/commands, .claude/skills).
 2. **Do not edit plan files** unless the user explicitly asks.
 
 When in doubt, update. See `CLAUDE.md` (Documentation rule, always applies) and the **maintain-documentation** skill (`.claude/skills/maintain-documentation/`).
