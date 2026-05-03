@@ -48,7 +48,7 @@ func TestProcessRecord_ParseFailureIsNoOp(t *testing.T) {
 	store := memstore.New()
 
 	rec := events.SQSMessage{Body: "{not json"}
-	if err := processRecord(context.Background(), cfg, launcher, store, nil, rec); err != nil {
+	if err := processRecord(context.Background(), cfg, launcher, store, rec); err != nil {
 		t.Fatalf("processRecord on bad JSON should return nil to avoid retry; got %v", err)
 	}
 	if len(launcher.launches) != 0 {
