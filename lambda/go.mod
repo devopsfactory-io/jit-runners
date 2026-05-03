@@ -5,6 +5,7 @@ go 1.26.2
 require (
 	cloud.google.com/go/firestore v1.22.0
 	cloud.google.com/go/pubsub/v2 v2.4.0
+	cloud.google.com/go/secretmanager v1.16.0
 	github.com/aws/aws-lambda-go v1.54.0
 	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/aws/aws-sdk-go-v2/config v1.32.14
@@ -15,6 +16,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.25
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
+	github.com/googleapis/gax-go/v2 v2.21.0
 	google.golang.org/api v0.274.0
 	google.golang.org/grpc v1.80.0
 )
@@ -47,7 +49,6 @@ require (
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.14 // indirect
-	github.com/googleapis/gax-go/v2 v2.21.0 // indirect
 	go.einride.tech/aip v0.83.0 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
