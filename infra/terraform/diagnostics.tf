@@ -25,19 +25,6 @@ resource "aws_cloudwatch_log_metric_filter" "silent_failure" {
   }
 }
 
-resource "aws_ssm_parameter" "runner_log_level" {
-  name        = "/jit-runners/runner-log-level"
-  type        = "String"
-  value       = "info"
-  description = "Runner-agent verbosity (info|debug). Read by scaleup on each invocation."
-
-  lifecycle {
-    # Operators flip this manually during incidents (aws ssm put-parameter).
-    # Routine `terraform apply` must NOT silently revert their change.
-    ignore_changes = [value]
-  }
-}
-
 # RunnerRole — append CloudWatch Logs permissions for the new groups.
 # Defined as a separate inline policy attached to the existing role, so it
 # coexists with the SelfTerminate policy already in ec2.tf.
@@ -66,19 +53,3 @@ resource "aws_iam_role_policy" "runner_cloudwatch_logs" {
   })
 }
 
-# ScaleUpLambdaRole — read /jit-runners/runner-log-level from SSM.
-resource "aws_iam_role_policy" "scaleup_ssm_read_log_level" {
-  name = "${aws_iam_role.scaleup_lambda.name}-ssm-log-level"
-  role = aws_iam_role.scaleup_lambda.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect   = "Allow"
-        Action   = "ssm:GetParameter"
-        Resource = aws_ssm_parameter.runner_log_level.arn
-      },
-    ]
-  })
-}
