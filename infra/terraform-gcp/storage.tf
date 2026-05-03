@@ -19,7 +19,7 @@ resource "google_storage_bucket" "functions" {
   # Lets operators roll back to a previous release_tag for the retention window.
   lifecycle_rule {
     condition { age = 90 }
-    action    { type = "Delete" }
+    action { type = "Delete" }
   }
 }
 

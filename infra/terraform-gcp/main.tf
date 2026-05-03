@@ -44,8 +44,8 @@ resource "random_id" "bucket_suffix" {
 resource "google_project_service" "apis" {
   for_each = toset([
     "cloudfunctions.googleapis.com",
-    "cloudbuild.googleapis.com",       # cloudfunctions Gen 2 builds via Cloud Build
-    "run.googleapis.com",               # cloudfunctions Gen 2 runs on Cloud Run
+    "cloudbuild.googleapis.com", # cloudfunctions Gen 2 builds via Cloud Build
+    "run.googleapis.com",        # cloudfunctions Gen 2 runs on Cloud Run
     "eventarc.googleapis.com",
     "pubsub.googleapis.com",
     "firestore.googleapis.com",
@@ -54,7 +54,7 @@ resource "google_project_service" "apis" {
     "cloudscheduler.googleapis.com",
     "storage.googleapis.com",
     "iam.googleapis.com",
-    "iamcredentials.googleapis.com",    # required for SA token minting
+    "iamcredentials.googleapis.com", # required for SA token minting
   ])
 
   project = var.gcp_project
