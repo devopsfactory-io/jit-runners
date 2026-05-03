@@ -20,13 +20,14 @@ func TestNew_DefaultsToAWS(t *testing.T) {
 	}
 }
 
-func TestNew_GCPReturnsStubError(t *testing.T) {
+func TestNew_GCPRequiresProject(t *testing.T) {
+	t.Setenv("GCP_PROJECT", "")
 	_, err := New(context.Background(), "gcp")
 	if err == nil {
-		t.Fatal("expected stub error, got nil")
+		t.Fatal("expected error when GCP_PROJECT unset")
 	}
-	if !strings.Contains(err.Error(), "not yet implemented") {
-		t.Errorf("got %v, want stub error mentioning 'not yet implemented'", err)
+	if !strings.Contains(err.Error(), "GCP_PROJECT") {
+		t.Errorf("expected error to mention GCP_PROJECT, got %v", err)
 	}
 }
 

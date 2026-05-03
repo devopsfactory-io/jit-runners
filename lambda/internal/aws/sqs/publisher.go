@@ -1,5 +1,5 @@
-// Package sqs is the AWS SQS implementation of the queue.Publisher and
-// queue.Consumer contracts defined in internal/queue.
+// Package sqs is the AWS SQS implementation of the queue.Publisher
+// contract defined in internal/queue.
 package sqs
 
 import (

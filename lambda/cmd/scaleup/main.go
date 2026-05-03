@@ -8,13 +8,16 @@ import (
 	"sync"
 	"time"
 
+	funcframework "github.com/GoogleCloudPlatform/functions-framework-go/funcframework"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
+	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/google/uuid"
 
 	awsec2 "github.com/devopsfactory-io/jit-runners/lambda/internal/aws/ec2"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/compute"
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
+	gcpruntime "github.com/devopsfactory-io/jit-runners/lambda/internal/gcp/runtime"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/provider"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
@@ -42,6 +45,20 @@ var (
 )
 
 func main() {
+	if os.Getenv("CLOUD_PROVIDER") == "gcp" {
+		ctx := context.Background()
+		if err := funcframework.RegisterCloudEventFunctionContext(ctx, "/", gcpHandler); err != nil {
+			log.Fatalf("funcframework.RegisterCloudEventFunctionContext: %v", err)
+		}
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "8080"
+		}
+		if err := funcframework.Start(port); err != nil {
+			log.Fatalf("funcframework.Start: %v", err)
+		}
+		return
+	}
 	lambda.Start(handler)
 }
 
@@ -65,6 +82,31 @@ func handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 		}
 	}
 	return nil
+}
+
+// gcpHandler is the GCP Eventarc / Pub/Sub CloudEvents entry point. Eventarc
+// delivers exactly one Pub/Sub message per invocation; we decode the envelope
+// and synthesize an events.SQSMessage so the existing processRecord logic can
+// be reused without modification.
+func gcpHandler(ctx context.Context, e cloudevents.Event) error {
+	cfg, err := loadConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	bundleOnce.Do(func() {
+		bundleRef, bundleErr = provider.New(ctx, "gcp")
+	})
+	if bundleErr != nil {
+		return fmt.Errorf("provider.New: %w", bundleErr)
+	}
+
+	body, err := gcpruntime.DecodePubSubData(e)
+	if err != nil {
+		return fmt.Errorf("decode cloudevent: %w", err)
+	}
+
+	record := events.SQSMessage{Body: string(body), MessageId: e.ID()}
+	return processRecord(ctx, cfg, bundleRef, record)
 }
 
 func processRecord(ctx context.Context, cfg *appconfig.Config, b *provider.Bundle, record events.SQSMessage) error {

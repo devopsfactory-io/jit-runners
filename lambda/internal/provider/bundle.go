@@ -18,7 +18,6 @@ import (
 type Bundle struct {
 	JobsPublisher      queue.Publisher
 	LifecyclePublisher queue.Publisher
-	Consumer           queue.Consumer
 	State              state.RunnerStore
 	Compute            compute.Launcher
 	Secrets            secrets.Loader

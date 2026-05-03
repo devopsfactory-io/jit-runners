@@ -43,8 +43,6 @@ func newAWS(ctx context.Context) (*Bundle, error) {
 	sqsClient := awssqssdk.NewFromConfig(awsCfg)
 	jobsPub := awssqs.NewPublisher(sqsClient, jobsURL)
 	lifecyclePub := awssqs.NewLifecyclePublisher(sqsClient, lifecycleURL)
-	consumer := awssqs.NewConsumer(sqsClient, jobsURL)
-
 	store := awsdynamo.NewStore(dynamodb.NewFromConfig(awsCfg), tableName)
 
 	launcher := awsec2.NewLauncher(awsec2sdk.NewFromConfig(awsCfg), awsec2.LauncherOptions{
@@ -57,7 +55,6 @@ func newAWS(ctx context.Context) (*Bundle, error) {
 	return &Bundle{
 		JobsPublisher:      jobsPub,
 		LifecyclePublisher: lifecyclePub,
-		Consumer:           consumer,
 		State:              store,
 		Compute:            launcher,
 		Secrets:            secLoader,

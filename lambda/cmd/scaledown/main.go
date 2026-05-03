@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"sync"
 
+	funcframework "github.com/GoogleCloudPlatform/functions-framework-go/funcframework"
 	"github.com/aws/aws-lambda-go/lambda"
 
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
@@ -27,6 +29,17 @@ var (
 )
 
 func main() {
+	if os.Getenv("CLOUD_PROVIDER") == "gcp" {
+		funcframework.RegisterHTTPFunction("/", gcpHTTPHandler)
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "8080"
+		}
+		if err := funcframework.Start(port); err != nil {
+			log.Fatalf("funcframework.Start: %v", err)
+		}
+		return
+	}
 	lambda.Start(handler)
 }
 
@@ -68,9 +81,21 @@ func handler(ctx context.Context) error {
 		return fmt.Errorf("cleanup: %w", err)
 	}
 
-	log.Printf("cleanup complete: stale=%d orphans=%d errors=%d",
+	log.Printf("cleanup complete: stale=%d orphans=%d errors=%d", //nolint:gosec // G706: counters are internal cleanup-result fields from runner.Cleaner — not user input
 		result.Stale, result.Orphans, result.Errors)
 	return nil
+}
+
+// gcpHTTPHandler is the GCP Cloud Scheduler entry point. Cloud Scheduler
+// invokes this function via HTTP with no meaningful payload; we run the same
+// cleanup logic as the AWS handler path.
+func gcpHTTPHandler(w http.ResponseWriter, r *http.Request) {
+	if err := handler(r.Context()); err != nil {
+		log.Printf("scaledown gcpHTTPHandler: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func loadConfig(ctx context.Context) (*appconfig.Config, error) {
