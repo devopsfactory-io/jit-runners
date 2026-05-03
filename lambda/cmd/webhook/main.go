@@ -11,9 +11,9 @@ import (
 	"strings"
 	"sync"
 
+	funcframework "github.com/GoogleCloudPlatform/functions-framework-go/funcframework"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	funcframework "github.com/GoogleCloudPlatform/functions-framework-go/funcframework"
 
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/provider"
@@ -105,10 +105,12 @@ func gcpHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := h.Handle(r.Context(), eventType, sig, body)
 	if resp.Status >= 500 {
-		log.Printf("gcpHTTPHandler: handle webhook: %s", resp.String())
+		log.Printf("gcpHTTPHandler: handle webhook status=%d body=%q", resp.Status, resp.Body)
 	}
 	w.WriteHeader(resp.Status)
-	_, _ = w.Write([]byte(resp.Body))
+	if _, werr := w.Write([]byte(resp.Body)); werr != nil { //nolint:gosec // G705: resp.Body is a fixed literal from webhook.Handler.Handle, not user-controlled
+		log.Printf("gcpHTTPHandler: write response: %v", werr)
+	}
 }
 
 func loadConfig(ctx context.Context) (*appconfig.Config, error) {

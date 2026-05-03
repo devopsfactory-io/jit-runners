@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aws/aws-lambda-go/lambda"
 	funcframework "github.com/GoogleCloudPlatform/functions-framework-go/funcframework"
+	"github.com/aws/aws-lambda-go/lambda"
 
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"

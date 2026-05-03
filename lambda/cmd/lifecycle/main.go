@@ -14,14 +14,14 @@ import (
 	"os"
 	"sync"
 
+	funcframework "github.com/GoogleCloudPlatform/functions-framework-go/funcframework"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	funcframework "github.com/GoogleCloudPlatform/functions-framework-go/funcframework"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
-	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
 	gcpruntime "github.com/devopsfactory-io/jit-runners/lambda/internal/gcp/runtime"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/lifecycle"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/provider"
 )
