@@ -11,11 +11,13 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/aws/aws-lambda-go/lambda"
+	funcframework "github.com/GoogleCloudPlatform/functions-framework-go/funcframework"
 
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
@@ -42,6 +44,17 @@ var (
 const activityWindow = 7 * 24 * time.Hour
 
 func main() {
+	if os.Getenv("CLOUD_PROVIDER") == "gcp" {
+		funcframework.RegisterHTTPFunction("/", gcpHTTPHandler)
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "8080"
+		}
+		if err := funcframework.Start(port); err != nil {
+			log.Fatalf("funcframework.Start: %v", err)
+		}
+		return
+	}
 	lambda.Start(handler)
 }
 
@@ -85,6 +98,18 @@ func handler(ctx context.Context) error {
 	}
 	log.Printf("rebalancer: tick complete repos=%d errors=%d", len(repos), errCount)
 	return nil
+}
+
+// gcpHTTPHandler is the GCP Cloud Scheduler entry point. Cloud Scheduler
+// invokes this function via HTTP with no meaningful payload; we run the same
+// rebalance cycle as the AWS handler path.
+func gcpHTTPHandler(w http.ResponseWriter, r *http.Request) {
+	if err := handler(r.Context()); err != nil {
+		log.Printf("rebalancer gcpHTTPHandler: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 // newGitHubClient mints a fresh installation token and returns a real
