@@ -87,3 +87,35 @@ variable "jit_runners_version" {
   default     = "dev"
   description = "jit-runners project version (e.g. v0.3.0). Defaults to 'dev' for local builds."
 }
+
+# --- GCP-specific variables (D9: googlecompute source) ---
+
+variable "gcp_project" {
+  type        = string
+  default     = ""
+  description = "GCP project ID for the GCE image build. Required for googlecompute source."
+}
+
+variable "gcp_zone" {
+  type        = string
+  default     = "us-central1-a"
+  description = "GCP zone for the Packer build instance. Storage locations are configured separately via gcp_image_storage_locations."
+}
+
+variable "gcp_source_image_family" {
+  type        = string
+  default     = "ubuntu-2404-lts-amd64"
+  description = "Source image family for the GCE build instance (Ubuntu 24.04 LTS amd64)."
+}
+
+variable "gcp_machine_type" {
+  type        = string
+  default     = "n2-standard-2"
+  description = "Machine type for the Packer build instance on GCP."
+}
+
+variable "gcp_image_storage_locations" {
+  type        = list(string)
+  default     = ["us"]
+  description = "Multi-region or region storage locations for the published GCE image. Use [\"us\"] for US multi-region, [\"us\", \"eu\", \"asia\"] for tri-multi-region distribution."
+}
