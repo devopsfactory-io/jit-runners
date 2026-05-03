@@ -14,7 +14,7 @@ variable "gcp_region" {
 }
 
 variable "prefix" {
-  description = "Resource name prefix. All resources are named ${prefix}-<role> (e.g. jit-runners-webhook, jit-runners-jobs)."
+  description = "Resource name prefix. All resources are named <prefix>-<role> (e.g. jit-runners-webhook, jit-runners-jobs)."
   type        = string
   default     = "jit-runners"
 }
