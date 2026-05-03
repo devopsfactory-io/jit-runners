@@ -26,12 +26,24 @@ func PublishLifecycle(ctx context.Context, p Publisher, msg *LifecycleMessage) e
 	return p.Publish(ctx, Msg{Body: body})
 }
 
-// ParseScaleUp decodes a queue body into a ScaleUpMessage. Used by the
-// scaleup function on both AWS (SQS body) and GCP (Pub/Sub message data).
+// ParseScaleUp decodes a queue body into a ScaleUpMessage and validates
+// the required fields are present (non-zero). Returns a structured error
+// for missing fields so the caller can distinguish malformed JSON from
+// missing-field errors. Used by the scaleup function on both AWS (SQS
+// body) and GCP (Pub/Sub message data).
 func ParseScaleUp(body []byte) (*ScaleUpMessage, error) {
 	var m ScaleUpMessage
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, fmt.Errorf("parse scaleup message: %w", err)
+	}
+	if m.JobID == 0 {
+		return nil, fmt.Errorf("parse scaleup message: missing job_id")
+	}
+	if m.RepositoryFull == "" {
+		return nil, fmt.Errorf("parse scaleup message: missing repository_full")
+	}
+	if m.InstallationID == 0 {
+		return nil, fmt.Errorf("parse scaleup message: missing installation_id")
 	}
 	return &m, nil
 }

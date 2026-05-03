@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -24,6 +25,7 @@ func TestPublishScaleUp_RoundTripsViaJSON(t *testing.T) {
 	in := &ScaleUpMessage{
 		JobID:          7,
 		RepositoryFull: "owner/repo",
+		InstallationID: 12345,
 		Labels:         []string{"self-hosted", "large"},
 		Source:         SourceWebhook,
 	}
@@ -85,5 +87,38 @@ func TestParseScaleUp_BadJSONReturnsError(t *testing.T) {
 func TestParseLifecycle_BadJSONReturnsError(t *testing.T) {
 	if _, err := ParseLifecycle([]byte("not json")); err == nil {
 		t.Fatal("expected parse error")
+	}
+}
+
+func TestParseScaleUp_MissingJobIDReturnsError(t *testing.T) {
+	body := []byte(`{"repository_full":"o/r","installation_id":1,"labels":["self-hosted"]}`)
+	_, err := ParseScaleUp(body)
+	if err == nil {
+		t.Fatal("expected missing-job_id error, got nil")
+	}
+	if !strings.Contains(err.Error(), "job_id") {
+		t.Errorf("error message should mention job_id, got %v", err)
+	}
+}
+
+func TestParseScaleUp_MissingRepositoryFullReturnsError(t *testing.T) {
+	body := []byte(`{"job_id":7,"installation_id":1,"labels":["self-hosted"]}`)
+	_, err := ParseScaleUp(body)
+	if err == nil {
+		t.Fatal("expected missing-repository_full error, got nil")
+	}
+	if !strings.Contains(err.Error(), "repository_full") {
+		t.Errorf("error message should mention repository_full, got %v", err)
+	}
+}
+
+func TestParseScaleUp_MissingInstallationIDReturnsError(t *testing.T) {
+	body := []byte(`{"job_id":7,"repository_full":"o/r","labels":["self-hosted"]}`)
+	_, err := ParseScaleUp(body)
+	if err == nil {
+		t.Fatal("expected missing-installation_id error, got nil")
+	}
+	if !strings.Contains(err.Error(), "installation_id") {
+		t.Errorf("error message should mention installation_id, got %v", err)
 	}
 }
