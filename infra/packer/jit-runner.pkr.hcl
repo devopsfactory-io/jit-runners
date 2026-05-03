@@ -96,19 +96,24 @@ build {
     "source.googlecompute.jit-runner",
   ]
 
+  # ====== AWS branch ======
+
   # Create destination directory for provisioning scripts
   provisioner "shell" {
+    only   = ["amazon-ebs.jit-runner"]
     inline = ["mkdir -p /tmp/packer-scripts"]
   }
 
   # Upload all provisioning scripts to the remote instance
   provisioner "file" {
+    only        = ["amazon-ebs.jit-runner"]
     source      = "scripts/aws/"
     destination = "/tmp/packer-scripts"
   }
 
   # Full runner setup (system packages, Docker, languages, cloud tools, runner agent)
   provisioner "shell" {
+    only   = ["amazon-ebs.jit-runner"]
     inline = ["chmod +x /tmp/packer-scripts/*.sh && bash /tmp/packer-scripts/setup-runner.sh"]
     environment_vars = [
       "RUNNER_VERSION=${var.runner_version}",
@@ -121,6 +126,7 @@ build {
   # Optional: user-provided extra setup script
   # Pass -var 'extra_script=scripts/my-custom.sh' to packer build
   provisioner "shell" {
+    only   = ["amazon-ebs.jit-runner"]
     inline = var.extra_script != "" ? [
       "chmod +x /tmp/packer-scripts/$(basename '${var.extra_script}')",
       "/tmp/packer-scripts/$(basename '${var.extra_script}')",
@@ -129,6 +135,7 @@ build {
 
   # Validate that all critical tools were installed
   provisioner "shell" {
+    only = ["amazon-ebs.jit-runner"]
     inline = [
       "echo '=== jit-runners: validating installed tools ==='",
       "git --version",
@@ -139,6 +146,70 @@ build {
       "node --version",
       "/usr/local/go/bin/go version",
       "aws --version",
+      "kubectl version --client -o json | jq -r '.clientVersion.gitVersion'",
+      "helm version --short",
+      "gh --version",
+      "jq --version",
+      "yq --version",
+      "gcc --version | head -1",
+      "cmake --version | head -1",
+      "make --version | head -1",
+      "git lfs version",
+      "cat /opt/jit-runner-manifest.txt",
+      "echo '=== jit-runners: all tools validated ==='",
+    ]
+  }
+
+  # ====== GCP branch (Tasks 5-12 create the scripts; this block only sets up provisioning) ======
+
+  # Create destination directory for provisioning scripts
+  provisioner "shell" {
+    only   = ["googlecompute.jit-runner"]
+    inline = ["mkdir -p /tmp/packer-scripts"]
+  }
+
+  # Upload all provisioning scripts to the remote instance
+  provisioner "file" {
+    only        = ["googlecompute.jit-runner"]
+    source      = "scripts/gcp/"
+    destination = "/tmp/packer-scripts"
+  }
+
+  # Full runner setup (system packages, Docker, languages, cloud tools, runner agent)
+  provisioner "shell" {
+    only   = ["googlecompute.jit-runner"]
+    inline = ["chmod +x /tmp/packer-scripts/*.sh && bash /tmp/packer-scripts/setup-runner.sh"]
+    environment_vars = [
+      "RUNNER_VERSION=${var.runner_version}",
+      "GO_VERSION=${var.go_version}",
+      "NODE_MAJOR=${var.node_major_version}",
+      "JIT_RUNNERS_VERSION=${var.jit_runners_version}",
+    ]
+  }
+
+  # Optional: user-provided extra setup script
+  # Pass -var 'extra_script=scripts/my-custom.sh' to packer build
+  provisioner "shell" {
+    only   = ["googlecompute.jit-runner"]
+    inline = var.extra_script != "" ? [
+      "chmod +x /tmp/packer-scripts/$(basename '${var.extra_script}')",
+      "/tmp/packer-scripts/$(basename '${var.extra_script}')",
+    ] : ["echo 'No extra script provided, skipping.'"]
+  }
+
+  # Validate that all critical tools were installed
+  provisioner "shell" {
+    only = ["googlecompute.jit-runner"]
+    inline = [
+      "echo '=== jit-runners: validating installed tools (GCP) ==='",
+      "git --version",
+      "docker --version",
+      "docker compose version",
+      "docker buildx version",
+      "python3 --version",
+      "node --version",
+      "/usr/local/go/bin/go version",
+      "gcloud --version | head -1",
       "kubectl version --client -o json | jq -r '.clientVersion.gitVersion'",
       "helm version --short",
       "gh --version",
