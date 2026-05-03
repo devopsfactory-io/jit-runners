@@ -43,4 +43,4 @@ jit-runners orchestrates ephemeral EC2 instances in response to GitHub webhook e
 - **Spot/on-demand fallback**: The scale-up Lambda automatically retries with on-demand if a spot request fails. Ensure your IAM policy allows both `ec2:RequestSpotInstances` and `ec2:RunInstances`.
 - **Network isolation**: Runners launch inside your VPC. Restrict security group egress to only what your workflows need (e.g. GitHub API, package registries).
 
-For deployment and hardening guidance, see [docs/getting-started-cloudformation.md](docs/getting-started-cloudformation.md) and [docs/getting-started-terraform.md](docs/getting-started-terraform.md).
+For deployment and hardening guidance, see [docs/getting-started-aws.md](docs/getting-started-aws.md) (AWS — OpenTofu/Terraform or CloudFormation) and [docs/getting-started-gcp.md](docs/getting-started-gcp.md) (GCP — OpenTofu/Terraform).

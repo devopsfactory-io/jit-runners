@@ -8,8 +8,9 @@ Lambda code. It mirrors the steps used for the v0.3.0 release.
 > bucket `jit-runners-lambda-s3`, four functions
 > (`jit-runners-{webhook,scaleup,scaledown,lifecycle}`).
 
-> **Out of scope:** Terraform deployment (see `docs/getting-started-terraform.md`)
-> and the AMI build (see `infra/packer/`).
+> **Out of scope:** GCP deployment (see `docs/getting-started-gcp.md` and the
+> "GCP path" section at the end of this file), the AWS Terraform path (see
+> `docs/getting-started-aws.md`), and the AMI build (see `infra/packer/`).
 
 ## Prerequisites
 
@@ -155,9 +156,9 @@ The previous-version objects must still exist in S3 for rollback to work — do
 ## Notes / known gaps
 
 - The S3 key convention used by the live stack is `vX.Y.Z/<fn>.zip` (no
-  `jit-runners/` prefix). Older docs (`docs/getting-started-cloudformation.md`,
-  `docs/getting-started-terraform.md`) say `jit-runners/${VERSION}/<fn>.zip` —
-  this drift is tracked separately and not corrected here.
+  `jit-runners/` prefix). Pre-Phase-E docs used `jit-runners/${VERSION}/<fn>.zip`;
+  the consolidated [`docs/getting-started-aws.md`](getting-started-aws.md)
+  reflects the no-prefix convention.
 - This procedure is currently manual. A future enhancement is to extend
   `release.yml` with an OIDC-authenticated job that uploads the zips and runs
   `update-stack` after the GitHub release is published.
