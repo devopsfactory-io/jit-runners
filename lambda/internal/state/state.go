@@ -58,11 +58,15 @@ type RunnerUpdate struct {
 	LastAttemptAt     *time.Time
 }
 
-// RunnerStore persists Runner records with TTL semantics. Implementations:
-// internal/aws/dynamo (DynamoDB on-demand) and internal/gcp/firestore.
+// RunnerStore defines the cloud-agnostic runner state contract.
 type RunnerStore interface {
 	Put(ctx context.Context, r Runner) error
 	Get(ctx context.Context, id string) (Runner, error)
+	// GetByInstanceID returns the runner whose InstanceID matches the
+	// given cloud instance ID. Returns ErrNotFound if no row matches.
+	// Used by the scaledown orphan sweep to cross-reference cloud-side
+	// EC2/GCE instances against the DDB/Firestore record set.
+	GetByInstanceID(ctx context.Context, instanceID string) (Runner, error)
 	List(ctx context.Context, f Filter) ([]Runner, error)
 	Update(ctx context.Context, id string, fields RunnerUpdate) error
 	Delete(ctx context.Context, id string) error

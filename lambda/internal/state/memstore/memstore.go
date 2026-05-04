@@ -52,6 +52,23 @@ func (s *Store) Get(_ context.Context, id string) (state.Runner, error) {
 	return r, nil
 }
 
+// GetByInstanceID returns the runner whose InstanceID matches. Used by the
+// scaledown orphan sweep to cross-reference cloud-side instances against
+// store records.
+func (s *Store) GetByInstanceID(_ context.Context, instanceID string) (state.Runner, error) {
+	if instanceID == "" {
+		return state.Runner{}, state.ErrNotFound
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, r := range s.records {
+		if r.InstanceID == instanceID {
+			return r, nil
+		}
+	}
+	return state.Runner{}, state.ErrNotFound
+}
+
 // List returns all records optionally filtered by StatusEq.
 func (s *Store) List(_ context.Context, f state.Filter) ([]state.Runner, error) {
 	s.mu.Lock()
