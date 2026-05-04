@@ -73,16 +73,17 @@ func handler(ctx context.Context) error {
 	staleMinutes := envInt("STALE_THRESHOLD_MINUTES", 10)
 	maxAgeMinutes := envInt("MAX_RUNNER_AGE_MINUTES", 360)
 	maxReEnqueueAttempts := envInt("MAX_RE_ENQUEUE_ATTEMPTS", 3)
+	orphanGraceMinutes := envInt("ORPHAN_GRACE_MINUTES", 5)
 
 	cleaner := runner.NewCleaner(bundleRef.State, bundleRef.Compute, ghClient, bundleRef.JobsPublisher,
-		staleMinutes, maxAgeMinutes, maxReEnqueueAttempts)
+		staleMinutes, maxAgeMinutes, maxReEnqueueAttempts, orphanGraceMinutes)
 	result, err := cleaner.Run(ctx)
 	if err != nil {
 		return fmt.Errorf("cleanup: %w", err)
 	}
 
-	log.Printf("cleanup complete: stale=%d orphans=%d errors=%d", //nolint:gosec // G706: counters are internal cleanup-result fields from runner.Cleaner — not user input
-		result.Stale, result.Orphans, result.Errors)
+	log.Printf("cleanup complete: stale=%d orphans=%d ec2_orphans=%d errors=%d", //nolint:gosec // G706: counters are internal cleanup-result fields from runner.Cleaner — not user input
+		result.Stale, result.Orphans, result.EC2Orphans, result.Errors)
 	return nil
 }
 

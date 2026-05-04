@@ -5,7 +5,9 @@ import (
 	"log"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/compute"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/lifecycle"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state/memstore"
@@ -28,8 +30,20 @@ func (f *fakeGitHub) DeregisterRunner(_ context.Context, repo string, runnerID i
 	return f.err
 }
 
+// fakeLauncher satisfies compute.Launcher; the integration tests don't
+// exercise compute paths, so all methods are inert.
+type fakeLauncher struct{}
+
+func (fakeLauncher) Launch(_ context.Context, _ compute.LaunchSpec) (compute.Instance, error) {
+	return compute.Instance{}, nil
+}
+func (fakeLauncher) Terminate(_ context.Context, _ []string) error { return nil }
+func (fakeLauncher) ListStale(_ context.Context, _ time.Duration) ([]compute.Instance, error) {
+	return nil, nil
+}
+
 func newHandler(store state.RunnerStore, gh *fakeGitHub) *lifecycle.Handler {
-	return lifecycle.New(store, gh, log.New(os.Stderr, "test ", 0))
+	return lifecycle.New(store, gh, fakeLauncher{}, log.New(os.Stderr, "test ", 0))
 }
 
 func TestLifecycle_InProgressThenCompleted_FollowsRunnerID(t *testing.T) {

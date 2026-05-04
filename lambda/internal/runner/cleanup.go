@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -50,6 +51,11 @@ type Cleaner struct {
 	// terminal failed and an ERROR is logged instead of re-publishing.
 	MaxReEnqueueAttempts int
 
+	// OrphanGraceMinutes is the minimum age of a cloud-side instance
+	// before sweepOrphanInstances will consider terminating it. Avoids
+	// races with healthy runner self-terminate. Default 5 min.
+	OrphanGraceMinutes time.Duration
+
 	// Now is injectable for tests; defaults to time.Now if unset.
 	Now func() time.Time
 }
@@ -62,7 +68,7 @@ func NewCleaner(
 	launcher compute.Launcher,
 	gh ghClient,
 	pub scaleupPublisher,
-	staleMinutes, maxAgeMinutes, maxReEnqueueAttempts int,
+	staleMinutes, maxAgeMinutes, maxReEnqueueAttempts, orphanGraceMinutes int,
 ) *Cleaner {
 	if staleMinutes <= 0 {
 		staleMinutes = 10
@@ -73,6 +79,9 @@ func NewCleaner(
 	if maxReEnqueueAttempts < 0 {
 		maxReEnqueueAttempts = 0
 	}
+	if orphanGraceMinutes <= 0 {
+		orphanGraceMinutes = 5
+	}
 	return &Cleaner{
 		Store:                store,
 		Launcher:             launcher,
@@ -81,6 +90,7 @@ func NewCleaner(
 		StaleAfter:           time.Duration(staleMinutes) * time.Minute,
 		MaxAge:               time.Duration(maxAgeMinutes) * time.Minute,
 		MaxReEnqueueAttempts: maxReEnqueueAttempts,
+		OrphanGraceMinutes:   time.Duration(orphanGraceMinutes) * time.Minute,
 		Now:                  time.Now,
 	}
 }
@@ -92,9 +102,10 @@ func NewCleaner(
 // or terminally failed because the budget was exhausted). Errors counts any
 // path where termination or publish failed and we abandoned the record.
 type CleanupResult struct {
-	Stale   int
-	Orphans int
-	Errors  int
+	Stale      int
+	Orphans    int
+	EC2Orphans int // cloud-side orphans (DDB terminal/missing, EC2 alive)
+	Errors     int
 }
 
 // Run executes the cleanup logic:
@@ -119,6 +130,8 @@ func (c *Cleaner) Run(ctx context.Context) (*CleanupResult, error) {
 	}
 	runCutoff := now.Add(-c.MaxAge)
 	c.sweepStaleRunning(ctx, running, runCutoff, now, result)
+
+	c.sweepOrphanInstances(ctx, now, result)
 
 	return result, nil
 }
@@ -251,4 +264,54 @@ func (c *Cleaner) now() time.Time {
 		return c.Now()
 	}
 	return time.Now()
+}
+
+// sweepOrphanInstances lists cloud-side instances tagged managed-by=jit-runners
+// (via the existing Launcher.ListStale primitive — filter semantics match
+// exactly: managed-by tag + state in [running, pending] + age threshold)
+// and terminates any whose RunnerStore row is in a terminal state
+// (StatusCompleted/StatusFailed) or missing entirely.
+//
+// Per issue #74 design D1.2: the architectural fix in the lifecycle handler
+// is the primary path; this sweep is the safety net.
+func (c *Cleaner) sweepOrphanInstances(ctx context.Context, now time.Time, result *CleanupResult) {
+	grace := c.OrphanGraceMinutes
+	if grace <= 0 {
+		grace = 5 * time.Minute
+	}
+	instances, err := c.Launcher.ListStale(ctx, grace)
+	if err != nil {
+		log.Printf("orphan sweep: list instances failed: %v", err)
+		result.Errors++
+		return
+	}
+	for _, inst := range instances {
+		rec, err := c.Store.GetByInstanceID(ctx, inst.ID)
+		switch {
+		case errors.Is(err, state.ErrNotFound):
+			log.Printf("orphan sweep: terminating %s (no DDB row, age=%s)",
+				inst.ID, now.Sub(inst.LaunchedAt))
+			if termErr := c.Launcher.Terminate(ctx, []string{inst.ID}); termErr != nil {
+				log.Printf("orphan sweep: terminate %s failed: %v", inst.ID, termErr)
+				result.Errors++
+				continue
+			}
+			result.EC2Orphans++
+		case err != nil:
+			log.Printf("orphan sweep: lookup %s failed: %v", inst.ID, err)
+			result.Errors++
+		case rec.Status == state.StatusCompleted || rec.Status == state.StatusFailed:
+			log.Printf("orphan sweep: terminating %s (DDB status=%s, age=%s)",
+				inst.ID, rec.Status, now.Sub(inst.LaunchedAt))
+			if termErr := c.Launcher.Terminate(ctx, []string{inst.ID}); termErr != nil {
+				log.Printf("orphan sweep: terminate %s failed: %v", inst.ID, termErr)
+				result.Errors++
+				continue
+			}
+			result.EC2Orphans++
+		default:
+			// Status is StatusPending or StatusRunning — existing
+			// sweeps own these. Leave alone.
+		}
+	}
 }
