@@ -27,9 +27,15 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y jq
 # --- yq (not in apt; install from GitHub release) ---
 echo "=== jit-runners: installing yq ==="
 YQ_VERSION="v4.44.6"
-sudo curl -sSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" \
-  -o /usr/local/bin/yq
-sudo chmod +x /usr/local/bin/yq
+curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" \
+  -o /tmp/yq
+# yq's checksums file lists `<sha256>  yq_linux_amd64` rows
+YQ_SHA256=$(curl -fsSL \
+  "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/checksums" \
+  | awk '/^[0-9a-f]{64}  yq_linux_amd64$/ {print $1}')
+echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c -
+sudo install -m 755 /tmp/yq /usr/local/bin/yq
+rm -f /tmp/yq
 
 # --- yamllint (via pip; PEP 668 enforcement on Ubuntu 24.04) ---
 echo "=== jit-runners: installing yamllint ==="

@@ -19,8 +19,10 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   zlib1g
 
 # Core utilities (parity with aws/01-system-base.sh).
+# jq is needed early by 03-languages.sh (Go checksum lookup) — it runs
+# before 05-cli-tools.sh which would otherwise own jq installation.
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  curl wget \
+  curl wget jq \
   git make tar gzip unzip zip bzip2 xz-utils zstd lz4 \
   rsync tree findutils diffutils patch \
   procps sudo passwd \

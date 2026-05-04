@@ -22,8 +22,9 @@ sudo python3 -m pip install --upgrade --break-system-packages --ignore-installed
 # --- Node.js LTS (official binary tarball from nodejs.org) ---
 echo "=== jit-runners: installing Node.js ${NODE_MAJOR}.x LTS ==="
 
-NODE_FULL_VERSION=$(curl -sSL "https://nodejs.org/dist/latest-v${NODE_MAJOR}.x/" \
-  | grep -oP 'node-v\K[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+SHASUMS=$(curl -fsSL "https://nodejs.org/dist/latest-v${NODE_MAJOR}.x/SHASUMS256.txt")
+NODE_FULL_VERSION=$(echo "${SHASUMS}" \
+  | grep -oP 'node-v\K[0-9]+\.[0-9]+\.[0-9]+(?=-linux-x64\.tar\.xz)' | head -1)
 
 if [ -z "${NODE_FULL_VERSION}" ]; then
   echo "ERROR: Could not resolve Node.js ${NODE_MAJOR}.x latest version"
@@ -31,8 +32,11 @@ if [ -z "${NODE_FULL_VERSION}" ]; then
 fi
 
 echo "Resolved Node.js v${NODE_FULL_VERSION}"
-curl -sSL "https://nodejs.org/dist/v${NODE_FULL_VERSION}/node-v${NODE_FULL_VERSION}-linux-x64.tar.xz" \
-  | sudo tar -C /usr/local --strip-components=1 -xJf -
+NODE_TAR="node-v${NODE_FULL_VERSION}-linux-x64.tar.xz"
+curl -fsSL "https://nodejs.org/dist/v${NODE_FULL_VERSION}/${NODE_TAR}" -o "/tmp/${NODE_TAR}"
+echo "${SHASUMS}" | grep "${NODE_TAR}" | sha256sum -c -
+sudo tar -C /usr/local --strip-components=1 -xJf "/tmp/${NODE_TAR}"
+rm -f "/tmp/${NODE_TAR}"
 
 node --version
 npm --version
@@ -40,8 +44,14 @@ sudo corepack enable || true
 
 # --- Go ---
 echo "=== jit-runners: installing Go ${GO_VERSION} ==="
-curl -sSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
-  | sudo tar -C /usr/local -xzf -
+GO_TAR="go${GO_VERSION}.linux-amd64.tar.gz"
+curl -fsSL "https://go.dev/dl/${GO_TAR}" -o "/tmp/${GO_TAR}"
+EXPECTED_SHA=$(curl -fsSL "https://go.dev/dl/?mode=json&include=all" \
+  | jq -r ".[] | select(.version==\"go${GO_VERSION}\") \
+           | .files[] | select(.filename==\"${GO_TAR}\") | .sha256")
+echo "${EXPECTED_SHA}  /tmp/${GO_TAR}" | sha256sum -c -
+sudo tar -C /usr/local -xzf "/tmp/${GO_TAR}"
+rm -f "/tmp/${GO_TAR}"
 
 # Make Go available system-wide
 cat <<'GOPATH' | sudo tee /etc/profile.d/go.sh > /dev/null
