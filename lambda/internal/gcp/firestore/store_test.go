@@ -407,6 +407,64 @@ func TestStore_Update_PartialFields(t *testing.T) {
 	}
 }
 
+func TestGetByInstanceID(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	t.Run("found", func(t *testing.T) {
+		fake := newFakeFirestore()
+		// Seed two docs in the runners collection.
+		_ = fake.Set(ctx, "runners", "r1", map[string]any{
+			"runner_id":   "r1",
+			"instance_id": "i-aaa",
+			"status":      "pending",
+		})
+		_ = fake.Set(ctx, "runners", "r2", map[string]any{
+			"runner_id":   "r2",
+			"instance_id": "i-bbb",
+			"status":      "running",
+		})
+		s := &Store{api: fake, collName: "runners"}
+
+		got, err := s.GetByInstanceID(ctx, "i-bbb")
+		if err != nil {
+			t.Fatalf("GetByInstanceID: %v", err)
+		}
+		if got.ID != "r2" {
+			t.Errorf("ID = %q, want r2", got.ID)
+		}
+		// Confirm the right filter was passed.
+		if len(fake.recordedFilters) != 1 {
+			t.Fatalf("expected 1 filter, got %d", len(fake.recordedFilters))
+		}
+		f := fake.recordedFilters[0]
+		if f.Field != "instance_id" || f.Op != "==" || f.Value != "i-bbb" {
+			t.Errorf("filter = %+v, want {instance_id == i-bbb}", f)
+		}
+	})
+
+	t.Run("not_found", func(t *testing.T) {
+		fake := newFakeFirestore()
+		s := &Store{api: fake, collName: "runners"}
+		_, err := s.GetByInstanceID(ctx, "i-zzz")
+		if !errors.Is(err, state.ErrNotFound) {
+			t.Errorf("err = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("empty_id_returns_not_found_without_call", func(t *testing.T) {
+		fake := newFakeFirestore()
+		s := &Store{api: fake, collName: "runners"}
+		_, err := s.GetByInstanceID(ctx, "")
+		if !errors.Is(err, state.ErrNotFound) {
+			t.Errorf("err = %v, want ErrNotFound", err)
+		}
+		if fake.recordedFilters != nil {
+			t.Errorf("expected no Query call for empty instance_id; recordedFilters = %+v", fake.recordedFilters)
+		}
+	})
+}
+
 // TestStore_Delete_RemovesDoc verifies Delete removes the document.
 func TestStore_Delete_RemovesDoc(t *testing.T) {
 	fake := newFakeFirestore()
