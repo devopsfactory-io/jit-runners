@@ -34,7 +34,8 @@ fi
 echo "Resolved Node.js v${NODE_FULL_VERSION}"
 NODE_TAR="node-v${NODE_FULL_VERSION}-linux-x64.tar.xz"
 curl -fsSL "https://nodejs.org/dist/v${NODE_FULL_VERSION}/${NODE_TAR}" -o "/tmp/${NODE_TAR}"
-echo "${SHASUMS}" | grep "${NODE_TAR}" | sha256sum -c -
+# SHASUMS lines have just the bare filename, so cd into /tmp before sha256sum -c
+(cd /tmp && echo "${SHASUMS}" | grep "${NODE_TAR}" | sha256sum -c -)
 sudo tar -C /usr/local --strip-components=1 -xJf "/tmp/${NODE_TAR}"
 rm -f "/tmp/${NODE_TAR}"
 
