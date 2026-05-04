@@ -29,10 +29,19 @@ echo "=== jit-runners: installing yq ==="
 YQ_VERSION="v4.44.6"
 curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" \
   -o /tmp/yq
-# yq's checksums file lists `<sha256>  yq_linux_amd64` rows
+# yq's `checksums` file is a multi-algorithm table (one row per asset, one
+# column per hash algorithm). Column order is in `checksums_hashes_order`;
+# SHA-256 is column 19 of the row (filename in col 1, then 18 hash columns
+# before SHA-256: CRC32, MD4, MD5, SHA1, TIGER, TTH, BTIH, ED2K, AICH,
+# WHIRLPOOL, RIPEMD-160, GOST94, GOST94-CRYPTOPRO, HAS-160, GOST12-256,
+# GOST12-512, SHA-224, then SHA-256).
 YQ_SHA256=$(curl -fsSL \
   "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/checksums" \
-  | awk '/^[0-9a-f]{64}  yq_linux_amd64$/ {print $1}')
+  | awk '$1 == "yq_linux_amd64" {print $19}')
+if [ -z "${YQ_SHA256}" ]; then
+  echo "ERROR: could not extract SHA-256 for yq_linux_amd64 from yq ${YQ_VERSION} checksums file" >&2
+  exit 1
+fi
 echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c -
 sudo install -m 755 /tmp/yq /usr/local/bin/yq
 rm -f /tmp/yq
