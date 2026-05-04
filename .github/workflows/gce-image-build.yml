@@ -108,7 +108,11 @@ jobs:
           else
             DISTRIBUTE="${{ inputs.distribute || 'true' }}"
             if [ "${DISTRIBUTE}" = "true" ]; then
-              ARGS="${ARGS} -var gcp_image_storage_locations=${{ env.GCE_DISTRIBUTION_LOCATIONS }}"
+              # Hardcoded with backslash-escaped quotes (matching ami-build.yml's
+              # ami_regions pattern). The previous form ${{ env.GCE_DISTRIBUTION_LOCATIONS }}
+              # broke bash quoting because GitHub Actions substitution does not
+              # escape inner double quotes — bash word-split the result.
+              ARGS="${ARGS} -var gcp_image_storage_locations=[\"us\",\"eu\",\"asia\"]"
             fi
           fi
 
