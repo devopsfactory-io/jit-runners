@@ -94,5 +94,14 @@ func (h *Handler) HandleSQS(ctx context.Context, body []byte) error {
 			// do not fail the message: DDB is committed; deregister is best-effort.
 		}
 	}
+
+	if msg.Action == "completed" && rec.InstanceID != "" && h.Compute != nil {
+		if err := h.Compute.Terminate(ctx, []string{rec.InstanceID}); err != nil {
+			h.Logger.Printf("lifecycle: terminate %s for runner=%d failed: %v",
+				rec.InstanceID, msg.RunnerID, err)
+			// best-effort: do not fail the message; the scaledown orphan
+			// sweep is the safety net (issue #74 design D1).
+		}
+	}
 	return nil
 }

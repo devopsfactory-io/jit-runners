@@ -19,10 +19,12 @@ type mockDDB struct {
 	putInput    *dynamodb.PutItemInput
 	getInput    *dynamodb.GetItemInput
 	scanInput   *dynamodb.ScanInput
+	queryInput  *dynamodb.QueryInput
 	updateInput *dynamodb.UpdateItemInput
 	deleteInput *dynamodb.DeleteItemInput
 	getOut      *dynamodb.GetItemOutput
 	scanOut     *dynamodb.ScanOutput
+	queryOut    *dynamodb.QueryOutput
 	err         error
 	items       map[string]map[string]types.AttributeValue
 }
@@ -76,6 +78,14 @@ func (m *mockDDB) Scan(_ context.Context, in *dynamodb.ScanInput, _ ...func(*dyn
 		return m.scanOut, m.err
 	}
 	return &dynamodb.ScanOutput{}, m.err
+}
+
+func (m *mockDDB) Query(_ context.Context, in *dynamodb.QueryInput, _ ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {
+	m.queryInput = in
+	if m.queryOut != nil {
+		return m.queryOut, m.err
+	}
+	return &dynamodb.QueryOutput{}, m.err
 }
 
 func (m *mockDDB) DeleteItem(_ context.Context, in *dynamodb.DeleteItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error) {
@@ -335,3 +345,60 @@ func stringPtr(s string) *string     { return &s }
 func int64Ptr(i int64) *int64        { return &i }
 func intPtr(i int) *int              { return &i }
 func timePtr(t time.Time) *time.Time { return &t }
+
+func TestGetByInstanceID(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	t.Run("found", func(t *testing.T) {
+		mock := &mockDDB{
+			queryOut: &dynamodb.QueryOutput{
+				Items: []map[string]types.AttributeValue{
+					{
+						"runner_id":   &types.AttributeValueMemberS{Value: "r1"},
+						"instance_id": &types.AttributeValueMemberS{Value: "i-aaa"},
+						"status":      &types.AttributeValueMemberS{Value: "pending"},
+					},
+				},
+			},
+		}
+		s := NewStore(mock, "jit-runners-runners")
+		got, err := s.GetByInstanceID(ctx, "i-aaa")
+		if err != nil {
+			t.Fatalf("GetByInstanceID: %v", err)
+		}
+		if got.ID != "r1" {
+			t.Errorf("ID = %q, want r1", got.ID)
+		}
+		if mock.queryInput == nil {
+			t.Fatal("expected Query call")
+		}
+		if got, want := *mock.queryInput.IndexName, "instance_id-index"; got != want {
+			t.Errorf("IndexName = %q, want %q", got, want)
+		}
+		if got, want := *mock.queryInput.TableName, "jit-runners-runners"; got != want {
+			t.Errorf("TableName = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("not_found", func(t *testing.T) {
+		mock := &mockDDB{queryOut: &dynamodb.QueryOutput{Items: nil}}
+		s := NewStore(mock, "jit-runners-runners")
+		_, err := s.GetByInstanceID(ctx, "i-zzz")
+		if !errors.Is(err, state.ErrNotFound) {
+			t.Errorf("err = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("empty_id_returns_not_found_without_call", func(t *testing.T) {
+		mock := &mockDDB{}
+		s := NewStore(mock, "jit-runners-runners")
+		_, err := s.GetByInstanceID(ctx, "")
+		if !errors.Is(err, state.ErrNotFound) {
+			t.Errorf("err = %v, want ErrNotFound", err)
+		}
+		if mock.queryInput != nil {
+			t.Error("expected no Query call for empty instance ID")
+		}
+	})
+}

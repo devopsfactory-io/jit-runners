@@ -86,6 +86,30 @@ func (s *Store) Get(ctx context.Context, id string) (appstate.Runner, error) {
 	return fromDoc(data), nil
 }
 
+// GetByInstanceID looks up a runner by its cloud instance ID using a
+// Firestore field-equality query on the `instance_id` field.
+// Returns state.ErrNotFound if no document matches. Used by the scaledown
+// orphan sweep (issue #74).
+//
+// Firestore's default single-field auto-index handles `==` queries on
+// `instance_id` without an explicit composite-index declaration — no
+// schema change required.
+func (s *Store) GetByInstanceID(ctx context.Context, instanceID string) (appstate.Runner, error) {
+	if instanceID == "" {
+		return appstate.Runner{}, appstate.ErrNotFound
+	}
+	docs, err := s.api.Query(ctx, s.collName, []QueryFilter{
+		{Field: "instance_id", Op: "==", Value: instanceID},
+	})
+	if err != nil {
+		return appstate.Runner{}, fmt.Errorf("gcp/firestore: GetByInstanceID %s: %w", instanceID, err)
+	}
+	if len(docs) == 0 {
+		return appstate.Runner{}, appstate.ErrNotFound
+	}
+	return fromDoc(docs[0]), nil
+}
+
 // List returns runner records matching the filter. StatusEq narrows by status;
 // OlderThan filters client-side records whose LaunchedAt is older than now-OlderThan.
 func (s *Store) List(ctx context.Context, f appstate.Filter) ([]appstate.Runner, error) {

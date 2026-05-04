@@ -127,3 +127,40 @@ func TestListActiveRepos(t *testing.T) {
 		}
 	})
 }
+
+func TestGetByInstanceID(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	store := New()
+	if err := store.Put(ctx, state.Runner{ID: "r1", InstanceID: "i-aaa", Status: state.StatusPending}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := store.Put(ctx, state.Runner{ID: "r2", InstanceID: "i-bbb", Status: state.StatusRunning}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	t.Run("found", func(t *testing.T) {
+		got, err := store.GetByInstanceID(ctx, "i-bbb")
+		if err != nil {
+			t.Fatalf("GetByInstanceID: %v", err)
+		}
+		if got.ID != "r2" {
+			t.Errorf("ID = %q, want r2", got.ID)
+		}
+	})
+
+	t.Run("not_found", func(t *testing.T) {
+		_, err := store.GetByInstanceID(ctx, "i-zzz")
+		if !errors.Is(err, state.ErrNotFound) {
+			t.Errorf("err = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("empty_id_returns_not_found", func(t *testing.T) {
+		_, err := store.GetByInstanceID(ctx, "")
+		if !errors.Is(err, state.ErrNotFound) {
+			t.Errorf("err = %v, want ErrNotFound", err)
+		}
+	})
+}

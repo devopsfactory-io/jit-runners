@@ -92,9 +92,18 @@ Resources:
       AttributeDefinitions:
         - AttributeName: runner_id
           AttributeType: S
+        - AttributeName: instance_id
+          AttributeType: S
       KeySchema:
         - AttributeName: runner_id
           KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: instance_id-index
+          KeySchema:
+            - AttributeName: instance_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true

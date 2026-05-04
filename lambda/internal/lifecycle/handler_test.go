@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -26,6 +27,10 @@ type updateCall struct {
 
 func (f *fakeStore) Get(_ context.Context, _ string) (state.Runner, error) {
 	return f.get, f.getErr
+}
+
+func (f *fakeStore) GetByInstanceID(_ context.Context, _ string) (state.Runner, error) {
+	return state.Runner{}, state.ErrNotFound
 }
 
 func (f *fakeStore) Put(_ context.Context, _ state.Runner) error { return nil }
@@ -94,7 +99,7 @@ func TestHandleSQS_TransitionTable(t *testing.T) {
 				Repository:     "owner/repo",
 			}}
 			gh := &fakeGitHub{}
-			h := &Handler{Store: store, GitHub: gh, Logger: testLogger()}
+			h := &Handler{Store: store, GitHub: gh, Compute: &fakeCompute{}, Logger: testLogger()}
 
 			body := []byte(`{"job_id":1,"repo":"owner/repo","runner_id":99,"action":"` + tc.action + `"}`)
 			if err := h.HandleSQS(context.Background(), body); err != nil {
@@ -131,7 +136,7 @@ func TestHandleSQS_TransitionTable(t *testing.T) {
 func TestHandleSQS_UnknownRecordDrops(t *testing.T) {
 	store := &fakeStore{getErr: state.ErrNotFound}
 	gh := &fakeGitHub{}
-	h := &Handler{Store: store, GitHub: gh, Logger: testLogger()}
+	h := &Handler{Store: store, GitHub: gh, Compute: &fakeCompute{}, Logger: testLogger()}
 
 	body := []byte(`{"job_id":1,"repo":"owner/repo","runner_id":99,"action":"completed"}`)
 	if err := h.HandleSQS(context.Background(), body); err != nil {
@@ -148,7 +153,7 @@ func TestHandleSQS_UnknownRecordDrops(t *testing.T) {
 func TestHandleSQS_DropsWhenRunnerIDZero(t *testing.T) {
 	store := &fakeStore{}
 	gh := &fakeGitHub{}
-	h := &Handler{Store: store, GitHub: gh, Logger: testLogger()}
+	h := &Handler{Store: store, GitHub: gh, Compute: &fakeCompute{}, Logger: testLogger()}
 
 	// runner_id == 0 is the defensive case: GitHub did not include a
 	// runner ID in the workflow_job payload. The handler must drop the
@@ -169,7 +174,7 @@ func TestHandleSQS_DropsWhenRunnerIDZero(t *testing.T) {
 func TestHandleSQS_DeregisterErrorDoesNotFail(t *testing.T) {
 	store := &fakeStore{get: state.Runner{ID: "99", Status: state.StatusRunning, GitHubRunnerID: 99, Repository: "owner/repo"}}
 	gh := &fakeGitHub{err: errors.New("network blip")}
-	h := &Handler{Store: store, GitHub: gh, Logger: testLogger()}
+	h := &Handler{Store: store, GitHub: gh, Compute: &fakeCompute{}, Logger: testLogger()}
 
 	body := []byte(`{"job_id":1,"repo":"owner/repo","runner_id":99,"action":"completed"}`)
 	if err := h.HandleSQS(context.Background(), body); err != nil {
@@ -186,9 +191,123 @@ func TestHandleSQS_DeregisterErrorDoesNotFail(t *testing.T) {
 func TestHandleSQS_BadJSONReturnsError(t *testing.T) {
 	store := &fakeStore{}
 	gh := &fakeGitHub{}
-	h := &Handler{Store: store, GitHub: gh, Logger: testLogger()}
+	h := &Handler{Store: store, GitHub: gh, Compute: &fakeCompute{}, Logger: testLogger()}
 
 	if err := h.HandleSQS(context.Background(), []byte(`{not json`)); err == nil {
 		t.Fatal("expected parse error")
+	}
+}
+
+// fakeCompute records Terminate calls and can be configured to return an error.
+type fakeCompute struct {
+	terminated [][]string
+	err        error
+}
+
+func (f *fakeCompute) Terminate(_ context.Context, ids []string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.terminated = append(f.terminated, ids)
+	return nil
+}
+
+func TestHandle_TerminatesOnCompleted(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	store := &fakeStore{
+		get: state.Runner{
+			ID:             "99",
+			InstanceID:     "i-aaa",
+			GitHubRunnerID: 99,
+			Status:         state.StatusRunning,
+		},
+	}
+	gh := &fakeGitHub{}
+	comp := &fakeCompute{}
+
+	h := &Handler{Store: store, GitHub: gh, Compute: comp, Logger: testLogger()}
+
+	body := []byte(`{"job_id":1,"repo":"owner/repo","runner_id":99,"action":"completed"}`)
+	if err := h.HandleSQS(ctx, body); err != nil {
+		t.Fatalf("HandleSQS: %v", err)
+	}
+
+	if len(comp.terminated) != 1 {
+		t.Fatalf("expected 1 Terminate call, got %d", len(comp.terminated))
+	}
+	if got, want := comp.terminated[0], []string{"i-aaa"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Terminate ids = %v, want %v", got, want)
+	}
+}
+
+func TestHandle_DoesNotTerminateOnInProgress(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	store := &fakeStore{
+		get: state.Runner{
+			ID:             "99",
+			InstanceID:     "i-aaa",
+			GitHubRunnerID: 99,
+			Status:         state.StatusPending,
+		},
+	}
+	comp := &fakeCompute{}
+	h := &Handler{Store: store, GitHub: &fakeGitHub{}, Compute: comp, Logger: testLogger()}
+
+	body := []byte(`{"job_id":1,"repo":"owner/repo","runner_id":99,"action":"in_progress"}`)
+	if err := h.HandleSQS(ctx, body); err != nil {
+		t.Fatalf("HandleSQS: %v", err)
+	}
+
+	if len(comp.terminated) != 0 {
+		t.Errorf("expected 0 Terminate calls on in_progress, got %d", len(comp.terminated))
+	}
+}
+
+func TestHandle_TerminateErrorIsLogged_NoFailure(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	store := &fakeStore{
+		get: state.Runner{
+			ID:             "99",
+			InstanceID:     "i-aaa",
+			GitHubRunnerID: 99,
+			Status:         state.StatusRunning,
+		},
+	}
+	comp := &fakeCompute{err: errors.New("EC2 throttled")}
+	h := &Handler{Store: store, GitHub: &fakeGitHub{}, Compute: comp, Logger: testLogger()}
+
+	body := []byte(`{"job_id":1,"repo":"owner/repo","runner_id":99,"action":"completed"}`)
+	if err := h.HandleSQS(ctx, body); err != nil {
+		t.Fatalf("HandleSQS: %v (best-effort terminate must not fail the message)", err)
+	}
+}
+
+func TestHandle_NoTerminateWhenInstanceIDEmpty(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	store := &fakeStore{
+		get: state.Runner{
+			ID:             "99",
+			InstanceID:     "",
+			GitHubRunnerID: 99,
+			Status:         state.StatusRunning,
+		},
+	}
+	comp := &fakeCompute{}
+	h := &Handler{Store: store, GitHub: &fakeGitHub{}, Compute: comp, Logger: testLogger()}
+
+	body := []byte(`{"job_id":1,"repo":"owner/repo","runner_id":99,"action":"completed"}`)
+	if err := h.HandleSQS(ctx, body); err != nil {
+		t.Fatalf("HandleSQS: %v", err)
+	}
+	if len(comp.terminated) != 0 {
+		t.Errorf("expected 0 Terminate calls when InstanceID empty, got %d", len(comp.terminated))
 	}
 }

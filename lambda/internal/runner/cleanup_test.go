@@ -10,6 +10,7 @@ import (
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/compute"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/state/memstore"
 )
 
 // fakeStore is an in-memory state.RunnerStore that captures Update calls so
@@ -28,6 +29,23 @@ type capturedUpdate struct {
 
 func (f *fakeStore) Put(_ context.Context, _ state.Runner) error { return nil }
 func (f *fakeStore) Get(_ context.Context, _ string) (state.Runner, error) {
+	return state.Runner{}, state.ErrNotFound
+}
+
+func (f *fakeStore) GetByInstanceID(_ context.Context, instanceID string) (state.Runner, error) {
+	if instanceID == "" {
+		return state.Runner{}, state.ErrNotFound
+	}
+	for _, r := range f.pending {
+		if r.InstanceID == instanceID {
+			return r, nil
+		}
+	}
+	for _, r := range f.running {
+		if r.InstanceID == instanceID {
+			return r, nil
+		}
+	}
 	return state.Runner{}, state.ErrNotFound
 }
 
@@ -52,11 +70,15 @@ func (f *fakeStore) ListActiveRepos(_ context.Context, _ time.Time) ([]string, e
 }
 
 // fakeLauncher records terminate calls and may inject an error. It also
-// satisfies compute.Launcher (Launch and ListStale return zero values; the
-// cleanup path does not call them).
+// satisfies compute.Launcher (Launch returns zero values; the cleanup path
+// does not call it). ListStale returns listResult/listErr for the orphan
+// sweep tests.
 type fakeLauncher struct {
 	terminated   []string
 	terminateErr error
+
+	listResult []compute.Instance
+	listErr    error
 }
 
 func (f *fakeLauncher) Launch(_ context.Context, _ compute.LaunchSpec) (compute.Instance, error) {
@@ -69,7 +91,10 @@ func (f *fakeLauncher) Terminate(_ context.Context, ids []string) error {
 }
 
 func (f *fakeLauncher) ListStale(_ context.Context, _ time.Duration) ([]compute.Instance, error) {
-	return nil, nil
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.listResult, nil
 }
 
 // fakeGitHub records DeregisterRunner calls and may inject an error.
@@ -540,6 +565,147 @@ func TestCleaner_RecordTooFresh_Skipped(t *testing.T) {
 	}
 	if res.Stale != 0 || res.Orphans != 0 || res.Errors != 0 {
 		t.Errorf("result = %+v, want zero", res)
+	}
+}
+
+// orphan-sweep tests ----------------------------------------------------
+
+func TestSweepOrphanInstances_DDBCompleted_Terminates(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	store := memstore.New()
+	if err := store.Put(ctx, state.Runner{ID: "r1", InstanceID: "i-aaa", Status: state.StatusCompleted}); err != nil {
+		t.Fatalf("seed Put: %v", err)
+	}
+
+	launcher := &fakeLauncher{
+		listResult: []compute.Instance{{ID: "i-aaa", LaunchedAt: now.Add(-10 * time.Minute)}},
+	}
+	c := &Cleaner{
+		Store:              store,
+		Launcher:           launcher,
+		OrphanGraceMinutes: 5 * time.Minute,
+		Now:                func() time.Time { return now },
+	}
+	result := &CleanupResult{}
+	c.sweepOrphanInstances(ctx, now, result)
+	if result.EC2Orphans != 1 {
+		t.Errorf("EC2Orphans = %d, want 1", result.EC2Orphans)
+	}
+	if len(launcher.terminated) != 1 || launcher.terminated[0] != "i-aaa" {
+		t.Errorf("terminated = %v, want [i-aaa]", launcher.terminated)
+	}
+}
+
+func TestSweepOrphanInstances_DDBFailed_Terminates(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	store := memstore.New()
+	if err := store.Put(ctx, state.Runner{ID: "r1", InstanceID: "i-bbb", Status: state.StatusFailed}); err != nil {
+		t.Fatalf("seed Put: %v", err)
+	}
+
+	launcher := &fakeLauncher{
+		listResult: []compute.Instance{{ID: "i-bbb", LaunchedAt: now.Add(-10 * time.Minute)}},
+	}
+	c := &Cleaner{Store: store, Launcher: launcher, OrphanGraceMinutes: 5 * time.Minute, Now: func() time.Time { return now }}
+	result := &CleanupResult{}
+	c.sweepOrphanInstances(ctx, now, result)
+	if result.EC2Orphans != 1 {
+		t.Errorf("EC2Orphans = %d, want 1", result.EC2Orphans)
+	}
+	if len(launcher.terminated) != 1 || launcher.terminated[0] != "i-bbb" {
+		t.Errorf("terminated = %v, want [i-bbb]", launcher.terminated)
+	}
+}
+
+func TestSweepOrphanInstances_NoDDBRow_Terminates(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	store := memstore.New() // empty
+	launcher := &fakeLauncher{
+		listResult: []compute.Instance{{ID: "i-ghost", LaunchedAt: now.Add(-10 * time.Minute)}},
+	}
+	c := &Cleaner{Store: store, Launcher: launcher, OrphanGraceMinutes: 5 * time.Minute, Now: func() time.Time { return now }}
+	result := &CleanupResult{}
+	c.sweepOrphanInstances(ctx, now, result)
+	if result.EC2Orphans != 1 {
+		t.Errorf("EC2Orphans = %d, want 1", result.EC2Orphans)
+	}
+	if len(launcher.terminated) != 1 || launcher.terminated[0] != "i-ghost" {
+		t.Errorf("terminated = %v, want [i-ghost]", launcher.terminated)
+	}
+}
+
+func TestSweepOrphanInstances_DDBPending_DoesNotTerminate(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	store := memstore.New()
+	if err := store.Put(ctx, state.Runner{ID: "r1", InstanceID: "i-aaa", Status: state.StatusPending}); err != nil {
+		t.Fatalf("seed Put: %v", err)
+	}
+
+	launcher := &fakeLauncher{
+		listResult: []compute.Instance{{ID: "i-aaa", LaunchedAt: now.Add(-10 * time.Minute)}},
+	}
+	c := &Cleaner{Store: store, Launcher: launcher, OrphanGraceMinutes: 5 * time.Minute, Now: func() time.Time { return now }}
+	result := &CleanupResult{}
+	c.sweepOrphanInstances(ctx, now, result)
+	if result.EC2Orphans != 0 {
+		t.Errorf("EC2Orphans = %d (pending case), want 0", result.EC2Orphans)
+	}
+	if len(launcher.terminated) != 0 {
+		t.Errorf("terminated = %v, want empty (pending sweep owns this)", launcher.terminated)
+	}
+}
+
+func TestSweepOrphanInstances_DDBRunning_DoesNotTerminate(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	store := memstore.New()
+	if err := store.Put(ctx, state.Runner{ID: "r1", InstanceID: "i-aaa", Status: state.StatusRunning}); err != nil {
+		t.Fatalf("seed Put: %v", err)
+	}
+
+	launcher := &fakeLauncher{
+		listResult: []compute.Instance{{ID: "i-aaa", LaunchedAt: now.Add(-10 * time.Minute)}},
+	}
+	c := &Cleaner{Store: store, Launcher: launcher, OrphanGraceMinutes: 5 * time.Minute, Now: func() time.Time { return now }}
+	result := &CleanupResult{}
+	c.sweepOrphanInstances(ctx, now, result)
+	if result.EC2Orphans != 0 {
+		t.Errorf("EC2Orphans = %d (running case), want 0", result.EC2Orphans)
+	}
+	if len(launcher.terminated) != 0 {
+		t.Errorf("terminated = %v, want empty (running sweep owns this)", launcher.terminated)
+	}
+}
+
+func TestSweepOrphanInstances_RecentlyLaunched_DoesNotTerminate(t *testing.T) {
+	// Launcher.ListStale already filters out "younger than threshold"
+	// server-side. This test simulates a ListStale that returned no
+	// instances (everything was within the grace window), and asserts
+	// the sweep is a clean no-op even with a Completed DDB row sitting
+	// around.
+	ctx := context.Background()
+	now := time.Now()
+	store := memstore.New()
+	if err := store.Put(ctx, state.Runner{ID: "r1", InstanceID: "i-aaa", Status: state.StatusCompleted}); err != nil {
+		t.Fatalf("seed Put: %v", err)
+	}
+
+	launcher := &fakeLauncher{
+		// Simulate "ListStale's threshold filtered everything; nothing returned"
+		listResult: nil,
+	}
+	c := &Cleaner{Store: store, Launcher: launcher, OrphanGraceMinutes: 5 * time.Minute, Now: func() time.Time { return now }}
+	result := &CleanupResult{}
+	c.sweepOrphanInstances(ctx, now, result)
+	if result.EC2Orphans != 0 {
+		t.Errorf("EC2Orphans = %d (no instances returned), want 0", result.EC2Orphans)
+	}
+	if len(launcher.terminated) != 0 {
+		t.Errorf("terminated = %v, want empty", launcher.terminated)
 	}
 }
 

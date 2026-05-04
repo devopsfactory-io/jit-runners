@@ -23,6 +23,7 @@ type API interface {
 	GetItem(ctx context.Context, input *dynamodb.GetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
 	UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
 	Scan(ctx context.Context, input *dynamodb.ScanInput, opts ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error)
+	Query(ctx context.Context, input *dynamodb.QueryInput, opts ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
 	DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error)
 }
 
@@ -169,6 +170,35 @@ func (s *Store) Get(ctx context.Context, id string) (state.Runner, error) {
 	}
 	var rec dbRecord
 	if err := attributevalue.UnmarshalMap(out.Item, &rec); err != nil {
+		return state.Runner{}, fmt.Errorf("unmarshal runner record: %w", err)
+	}
+	return fromDB(rec), nil
+}
+
+// GetByInstanceID queries the instance_id-index GSI to look up a runner
+// by its cloud instance ID. Returns state.ErrNotFound if no row matches.
+// Used by the scaledown orphan sweep (issue #74).
+func (s *Store) GetByInstanceID(ctx context.Context, instanceID string) (state.Runner, error) {
+	if instanceID == "" {
+		return state.Runner{}, state.ErrNotFound
+	}
+	out, err := s.client.Query(ctx, &dynamodb.QueryInput{
+		TableName:              aws.String(s.tableName),
+		IndexName:              aws.String("instance_id-index"),
+		KeyConditionExpression: aws.String("instance_id = :iid"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":iid": &types.AttributeValueMemberS{Value: instanceID},
+		},
+		Limit: aws.Int32(1),
+	})
+	if err != nil {
+		return state.Runner{}, fmt.Errorf("query instance_id-index: %w", err)
+	}
+	if len(out.Items) == 0 {
+		return state.Runner{}, state.ErrNotFound
+	}
+	var rec dbRecord
+	if err := attributevalue.UnmarshalMap(out.Items[0], &rec); err != nil {
 		return state.Runner{}, fmt.Errorf("unmarshal runner record: %w", err)
 	}
 	return fromDB(rec), nil
