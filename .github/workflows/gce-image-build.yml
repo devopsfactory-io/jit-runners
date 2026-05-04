@@ -108,11 +108,13 @@ jobs:
           else
             DISTRIBUTE="${{ inputs.distribute || 'true' }}"
             if [ "${DISTRIBUTE}" = "true" ]; then
-              # Hardcoded with backslash-escaped quotes (matching ami-build.yml's
-              # ami_regions pattern). The previous form ${{ env.GCE_DISTRIBUTION_LOCATIONS }}
-              # broke bash quoting because GitHub Actions substitution does not
-              # escape inner double quotes — bash word-split the result.
-              ARGS="${ARGS} -var gcp_image_storage_locations=[\"us\",\"eu\",\"asia\"]"
+              # Packer's googlecompute plugin only accepts ONE storage location
+              # per image; specifying multiple returns "Invalid image storage
+              # locations: Must not have more than 1 region". Using "us"
+              # (multi-region) keeps the image globally accessible from a single
+              # primary region. Multi-region replication to eu/asia, if needed,
+              # is a separate gcloud compute images create step (follow-up).
+              ARGS="${ARGS} -var gcp_image_storage_locations=[\"us\"]"
             fi
           fi
 
