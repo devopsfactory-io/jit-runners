@@ -14,7 +14,9 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   python3 python3-pip python3-dev python3-venv
 
 # --break-system-packages on apt-managed Pythons (PEP 668 enforcement).
-sudo python3 -m pip install --upgrade --break-system-packages \
+# --ignore-installed to skip uninstalling debian-managed packages whose
+# RECORD file is missing (e.g. wheel 0.42.0 from Ubuntu 24.04 apt).
+sudo python3 -m pip install --upgrade --break-system-packages --ignore-installed \
   pip setuptools wheel
 
 # --- Node.js LTS (official binary tarball from nodejs.org) ---
