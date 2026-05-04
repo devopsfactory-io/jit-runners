@@ -1,10 +1,13 @@
 package rebalancer
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"strings"
 	"testing"
 
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
@@ -166,5 +169,108 @@ func TestRebalance_GHErrorPropagates(t *testing.T) {
 	}
 	if len(pub.published) != 0 {
 		t.Errorf("expected 0 publishes on error, got %d", len(pub.published))
+	}
+}
+
+// TestRebalance_CycleCompleteLogShape locks the operator-facing log line
+// shape that troubleshooting.md and release.md reference by name. A future
+// refactor that drops `published=` or renames `label_sets` would silently
+// break dashboards built against this contract; this test guards it.
+//
+// Per spec D20 (Phase F): the format string is
+//
+//	rebalancer: cycle complete repo=<repo> demand=<n> supply=<n> published=<n> label_sets=<n>
+func TestRebalance_CycleCompleteLogShape(t *testing.T) {
+	cases := []struct {
+		name             string
+		jobs             []github.QueuedJob
+		seedPending      []state.Runner
+		expectSubstrings []string
+	}{
+		{
+			name: "no_gap",
+			jobs: nil,
+			expectSubstrings: []string{
+				"rebalancer: cycle complete",
+				"repo=owner/repo",
+				"demand=0",
+				"supply=0",
+				"published=0",
+				"label_sets=0",
+			},
+		},
+		{
+			name: "demand_exceeds_supply",
+			jobs: []github.QueuedJob{
+				{JobID: 1, Status: "queued", Labels: []string{"self-hosted", "large"}},
+				{JobID: 2, Status: "queued", Labels: []string{"self-hosted", "large"}},
+				{JobID: 3, Status: "queued", Labels: []string{"self-hosted", "large"}},
+			},
+			seedPending: []state.Runner{
+				{ID: "r0", Status: state.StatusPending, Labels: []string{"self-hosted", "large"}},
+			},
+			expectSubstrings: []string{
+				"rebalancer: cycle complete",
+				"repo=owner/repo",
+				"demand=3",
+				"supply=1",
+				"published=2",
+				"label_sets=1",
+			},
+		},
+		{
+			name: "two_label_sets",
+			jobs: []github.QueuedJob{
+				{JobID: 1, Status: "queued", Labels: []string{"self-hosted", "large"}},
+				{JobID: 2, Status: "queued", Labels: []string{"self-hosted", "medium"}},
+			},
+			seedPending: nil,
+			expectSubstrings: []string{
+				"rebalancer: cycle complete",
+				"repo=owner/repo",
+				"demand=2",
+				"supply=0",
+				"published=2",
+				"label_sets=2",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Capture stdlib log output. rebalancer.go uses log.Printf
+			// (not slog), so we redirect the default logger's output
+			// to a buffer for the duration of one Rebalance() call.
+			var buf bytes.Buffer
+			origOut := log.Writer()
+			origFlags := log.Flags()
+			log.SetOutput(&buf)
+			log.SetFlags(0) // strip date/time prefix; assert pure message
+			defer func() {
+				log.SetOutput(origOut)
+				log.SetFlags(origFlags)
+			}()
+
+			gh := &fakeGH{jobs: tc.jobs}
+			store := memstore.New()
+			ctx := context.Background()
+			for _, r := range tc.seedPending {
+				if err := store.Put(ctx, r); err != nil {
+					t.Fatalf("Put(%s): %v", r.ID, err)
+				}
+			}
+			pub := &fakePub{}
+
+			if err := Rebalance(ctx, gh, store, pub, "owner/repo", 42); err != nil {
+				t.Fatalf("Rebalance: %v", err)
+			}
+
+			got := buf.String()
+			for _, want := range tc.expectSubstrings {
+				if !strings.Contains(got, want) {
+					t.Errorf("log output missing %q\nfull output: %q", want, got)
+				}
+			}
+		})
 	}
 }
