@@ -128,7 +128,7 @@ resource "google_project_iam_member" "runner_metric_writer" {
 resource "google_project_iam_custom_role" "runner_self_terminate" {
   role_id     = "${replace(var.prefix, "-", "_")}_runner_self_terminate"
   title       = "${var.prefix} runner self-terminate"
-  description = "Permits compute.instances.delete on instances labeled managed-by=jit-runners only."
+  description = "Permits compute.instances.delete on instances named jit-runner-* only."
   permissions = ["compute.instances.delete"]
 }
 
@@ -139,10 +139,10 @@ resource "google_project_iam_member" "runner_self_terminate" {
 
   condition {
     title       = "self-terminate own instance only"
-    description = "Restricts runner SA to deleting only instances tagged managed-by=jit-runners."
+    description = "Restricts runner SA to deleting only instances named jit-runner-* (the launcher's deterministic name prefix). resource.labels is not supported in GCP IAM CEL — see spec D15 follow-up."
     expression  = <<-EOT
       resource.type == "compute.googleapis.com/Instance" &&
-      resource.labels.managed-by == "jit-runners"
+      resource.name.contains("/instances/jit-runner-")
     EOT
   }
 }

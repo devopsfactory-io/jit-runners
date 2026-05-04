@@ -49,6 +49,11 @@ type Config struct {
 	IAMInstanceProfile string
 	DefaultAMI         string
 
+	// DefaultInstanceType is the cloud-specific machine type used when no
+	// label mapping matches. AWS uses an EC2 type (e.g. t3.large); GCP uses
+	// a GCE machine type (e.g. n2-standard-2). Required.
+	DefaultInstanceType string
+
 	// Scale-down configuration.
 	MaxRunnerAgeMinutes   int
 	StaleThresholdMinutes int
@@ -78,12 +83,13 @@ func Load(ctx context.Context) (*Config, error) {
 // the default AWS Secrets Manager loader (constructed lazily only if needed).
 func LoadWith(ctx context.Context, loader secrets.Loader) (*Config, error) {
 	cfg := &Config{
-		AppID:              os.Getenv("GITHUB_APP_ID"),
-		QueueURL:           os.Getenv("SQS_QUEUE_URL"),
-		TableName:          os.Getenv("DYNAMODB_TABLE_NAME"),
-		SecurityGroupID:    os.Getenv("EC2_SECURITY_GROUP_ID"),
-		IAMInstanceProfile: os.Getenv("EC2_IAM_INSTANCE_PROFILE"),
-		DefaultAMI:         os.Getenv("EC2_DEFAULT_AMI"),
+		AppID:               os.Getenv("GITHUB_APP_ID"),
+		QueueURL:            os.Getenv("SQS_QUEUE_URL"),
+		TableName:           os.Getenv("DYNAMODB_TABLE_NAME"),
+		SecurityGroupID:     os.Getenv("EC2_SECURITY_GROUP_ID"),
+		IAMInstanceProfile:  os.Getenv("EC2_IAM_INSTANCE_PROFILE"),
+		DefaultAMI:          os.Getenv("EC2_DEFAULT_AMI"),
+		DefaultInstanceType: os.Getenv("DEFAULT_INSTANCE_TYPE"),
 	}
 
 	if err := validateRequiredEnv(cfg); err != nil {

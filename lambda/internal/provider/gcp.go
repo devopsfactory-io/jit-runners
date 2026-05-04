@@ -69,6 +69,14 @@ func newGCP(ctx context.Context) (*Bundle, error) {
 	})
 
 	closeFn := func() error {
+		// Stop publishers first to drain in-flight messages and terminate the
+		// SDK's background goroutines before the underlying client closes.
+		if jobsPub != nil {
+			jobsPub.Stop()
+		}
+		if lifecyclePub != nil {
+			lifecyclePub.Stop()
+		}
 		return errors.Join(
 			psClient.Close(),
 			fsClient.Close(),

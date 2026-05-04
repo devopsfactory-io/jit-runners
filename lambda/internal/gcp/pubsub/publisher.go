@@ -25,6 +25,15 @@ func NewPublisher(client *pubsub.Client, topicName string) *Publisher {
 	return &Publisher{publisher: client.Publisher(topicName)}
 }
 
+// Stop sends all remaining messages and stops the background goroutines.
+// The caller must invoke Stop before closing the underlying *pubsub.Client.
+func (p *Publisher) Stop() {
+	if p == nil || p.publisher == nil {
+		return
+	}
+	p.publisher.Stop()
+}
+
 // Publish marshals m.Body into a Pub/Sub message and publishes synchronously.
 // The Pub/Sub Go SDK applies internal batching across concurrent calls
 // (default: 10ms delay, 100 msg count, 1MB byte). One synchronous call per

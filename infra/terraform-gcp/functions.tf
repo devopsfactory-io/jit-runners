@@ -109,6 +109,7 @@ resource "google_cloudfunctions2_function" "scaleup" {
       RUNNER_SA_EMAIL         = google_service_account.runner.email
       RUNNER_ZONE             = var.runner_zone
       LABEL_MAPPINGS          = var.label_mappings
+      DEFAULT_INSTANCE_TYPE   = var.default_instance_type
       MAX_RE_ENQUEUE_ATTEMPTS = tostring(var.max_re_enqueue_attempts)
       LOG_LEVEL               = "info"
     }

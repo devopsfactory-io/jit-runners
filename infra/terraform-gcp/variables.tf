@@ -128,6 +128,12 @@ variable "label_mappings" {
   default     = "[]"
 }
 
+variable "default_instance_type" {
+  description = "Default GCE machine type for runner VMs when no label_mappings entry matches. n2-standard-2 picked as the cheapest reasonable Spot-eligible default; operators may override."
+  type        = string
+  default     = "n2-standard-2"
+}
+
 variable "max_runner_age_minutes" {
   description = "Force-terminate runner VMs older than this. Mirrors AWS MaxRunnerAgeMinutes."
   type        = number

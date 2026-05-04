@@ -52,9 +52,9 @@ variable "default_ami" {
 }
 
 variable "default_instance_type" {
-  description = "Default EC2 instance type for runners"
+  description = "Default EC2 instance type for runners when no LABEL_MAPPINGS entry matches the requested labels."
   type        = string
-  default     = "t3.medium"
+  default     = "t3.large"
 }
 
 variable "label_mappings" {

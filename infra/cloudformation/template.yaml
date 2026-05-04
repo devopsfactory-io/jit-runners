@@ -54,6 +54,11 @@ Parameters:
     Type: AWS::EC2::Image::Id
     Description: Default AMI ID for runner instances (Amazon Linux 2023 recommended).
 
+  DefaultInstanceType:
+    Type: String
+    Default: t3.large
+    Description: Default EC2 instance type for runners when no LabelMappings entry matches.
+
   LabelMappings:
     Type: String
     Default: "[]"
@@ -382,6 +387,7 @@ Resources:
           EC2_SECURITY_GROUP_ID: !Ref RunnerSecurityGroup
           EC2_IAM_INSTANCE_PROFILE: !Ref RunnerInstanceProfile
           EC2_DEFAULT_AMI: !Ref DefaultAMI
+          DEFAULT_INSTANCE_TYPE: !Ref DefaultInstanceType
           LABEL_MAPPINGS: !Ref LabelMappings
 
   ScaleUpLogGroup:
