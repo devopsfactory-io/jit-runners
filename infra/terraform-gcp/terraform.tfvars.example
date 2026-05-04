@@ -1,0 +1,82 @@
+# ============================================================================
+# jit-runners GCP Terraform module — example tfvars
+#
+# Copy to terraform.tfvars (gitignored) and fill in. Run:
+#   tofu init && tofu plan && tofu apply
+#
+# First apply notes:
+#   - First apply enables 12 GCP APIs (~1-2 min). If any individual API
+#     enablement fails, re-run apply — google_project_service is idempotent.
+#   - First apply also triggers Cloud Build to build container images for
+#     all 5 Cloud Run functions (~5-10 min total). Subsequent applies with
+#     the same release_tag are fast (no rebuilds).
+#   - State will grow ~50MB per release_tag bump (5 zips × ~10MB base64-
+#     encoded in state). Use a GCS remote backend (see versions.tf comment).
+# ============================================================================
+
+# --- Identity ---
+
+gcp_project = "my-jit-runners-project"
+gcp_region  = "us-central1"
+prefix      = "jit-runners"  # All resources named ${prefix}-<role>
+
+# --- Release pinning (D11) ---
+
+# The GitHub release tag to deploy. Module fetches the 5 function zips from
+#   https://github.com/devopsfactory-io/jit-runners/releases/download/<tag>/<func>.zip
+# automatically — no operator-side upload step. Bump and re-apply to deploy
+# a new release.
+release_tag = "v1.0.0-rc.5"
+
+# --- Firestore (D12) ---
+
+# Set true if your project has NO Firestore database yet. Set false if you
+# already have one (Firestore Native is a project-level singleton; trying
+# to create a second errors).
+create_firestore_database = false
+
+# --- Runner image ---
+
+# The maintainer publishes a public GCE image with each tagged release. To
+# use it, set runner_image to:
+#   "projects/<maintainer-project>/global/images/jit-runner-<version>-..."
+#
+# Or build your own private image via:
+#   make image.build-test GCP_PROJECT=my-jit-runners-project
+# and reference its image URI here.
+runner_image  = "projects/devopsfactory-io-jit-runners/global/images/jit-runner-v1-runner2-332-0-1700000000"
+runner_subnet = "projects/my-jit-runners-project/regions/us-central1/subnetworks/default"
+# runner_network = "default"      # uncomment to override default
+# runner_zone    = "us-central1-a" # uncomment to override default
+
+# --- GitHub App credentials ---
+
+github_app_id          = "123456"  # Your GitHub App's numeric ID
+github_installation_id = "789012"  # Installation ID from your GitHub App settings
+
+# Webhook secret (HMAC) — written to Secret Manager. Generate via:
+#   openssl rand -hex 32
+# and configure the same value in your GitHub App's webhook secret field.
+webhook_secret_value = "REDACTED-32-byte-hex-string"
+
+# GitHub App private key (PEM body) — written to Secret Manager. Download from
+# your GitHub App's settings page, then paste here.
+github_app_private_key = <<-EOT
+-----BEGIN RSA PRIVATE KEY-----
+... (paste full PEM body) ...
+-----END RSA PRIVATE KEY-----
+EOT
+
+# --- Operational thresholds (defaults usually fine) ---
+
+# label_mappings          = "[]"   # JSON: [{"label":"large","machine_type":"n2-standard-8"}, ...]
+# max_runner_age_minutes  = 360    # Force-terminate runners older than this
+# stale_threshold_minutes = 10     # Re-enqueue stuck pending runners after this
+# max_re_enqueue_attempts = 3      # Stuck pending → terminal after this many re-enqueues
+
+# --- Function scaling knobs (defaults usually fine) ---
+
+# function_memory          = "256M"
+# function_timeout_seconds = 60
+# max_instance_count       = 10  # Per-function ceiling for webhook + scaleup + lifecycle
+                                 # (scaledown + rebalancer are pinned to 1)

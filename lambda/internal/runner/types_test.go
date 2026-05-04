@@ -1,47 +1,59 @@
 package runner
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
 
-func TestNewRecord(t *testing.T) {
-	rec := NewRecord("org/repo", 123, 456, "i-abc123", []string{"self-hosted", "linux"})
-
-	if rec.RunnerID != "org/repo#123" {
-		t.Errorf("RunnerID = %q, want %q", rec.RunnerID, "org/repo#123")
+func TestIDFromGitHubRunnerID(t *testing.T) {
+	tests := []struct {
+		ghID int64
+		want string
+	}{
+		{12345, "12345"},
+		{1, "1"},
+		{0, "0"},
 	}
-	if rec.InstanceID != "i-abc123" {
-		t.Errorf("InstanceID = %q", rec.InstanceID)
-	}
-	if rec.JobID != 123 {
-		t.Errorf("JobID = %d, want 123", rec.JobID)
-	}
-	if rec.RunID != 456 {
-		t.Errorf("RunID = %d, want 456", rec.RunID)
-	}
-	if rec.Status != StatusPending {
-		t.Errorf("Status = %q, want %q", rec.Status, StatusPending)
-	}
-	if rec.CreatedAt == 0 {
-		t.Error("CreatedAt should be non-zero")
-	}
-	if rec.TTL <= rec.CreatedAt {
-		t.Error("TTL should be greater than CreatedAt")
+	for _, tt := range tests {
+		got := IDFromGitHubRunnerID(tt.ghID)
+		if got != tt.want {
+			t.Errorf("IDFromGitHubRunnerID(%d) = %q, want %q", tt.ghID, got, tt.want)
+		}
 	}
 }
 
-func TestRunnerID(t *testing.T) {
-	tests := []struct {
-		repo  string
-		jobID int64
-		want  string
-	}{
-		{"org/repo", 123, "org/repo#123"},
-		{"user/project", 0, "user/project#0"},
-		{"a/b", 999999, "a/b#999999"},
+func TestNew(t *testing.T) {
+	r := New("org/repo", 99887766, "i-abc123", 12345, 67890, []string{"self-hosted", "large"})
+
+	if r.ID != "99887766" {
+		t.Errorf("ID = %q, want %q", r.ID, "99887766")
 	}
-	for _, tt := range tests {
-		got := runnerID(tt.repo, tt.jobID)
-		if got != tt.want {
-			t.Errorf("runnerID(%q, %d) = %q, want %q", tt.repo, tt.jobID, got, tt.want)
-		}
+	if r.GitHubRunnerID != 99887766 {
+		t.Errorf("GitHubRunnerID = %d, want 99887766", r.GitHubRunnerID)
+	}
+	if r.JobID != 12345 {
+		t.Errorf("JobID = %d, want 12345", r.JobID)
+	}
+	if r.WorkflowRunID != 67890 {
+		t.Errorf("WorkflowRunID = %d, want 67890", r.WorkflowRunID)
+	}
+	if r.InstanceID != "i-abc123" {
+		t.Errorf("InstanceID = %q", r.InstanceID)
+	}
+	if r.Repository != "org/repo" {
+		t.Errorf("Repository = %q", r.Repository)
+	}
+	if r.Status != StatusPending {
+		t.Errorf("Status = %q, want %q", r.Status, StatusPending)
+	}
+	if r.LaunchedAt.IsZero() {
+		t.Error("LaunchedAt should be non-zero")
+	}
+	if !r.TTL.After(r.LaunchedAt) {
+		t.Error("TTL should be after LaunchedAt")
+	}
+	// Defensive: ID and GitHubRunnerID must be consistent.
+	if r.ID != strconv.FormatInt(r.GitHubRunnerID, 10) {
+		t.Errorf("ID and GitHubRunnerID inconsistent: ID=%q GitHubRunnerID=%d", r.ID, r.GitHubRunnerID)
 	}
 }

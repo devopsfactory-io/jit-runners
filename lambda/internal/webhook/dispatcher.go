@@ -5,24 +5,19 @@ import (
 	"fmt"
 
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
-	"github.com/devopsfactory-io/jit-runners/lambda/internal/lifecycle"
-	internalsqs "github.com/devopsfactory-io/jit-runners/lambda/internal/sqs"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 )
 
 // scaleUpPublisher is the minimal surface the Handler needs from a
-// scale-up queue publisher. *internalsqs.Publisher satisfies this.
-//
-// Defined locally (rather than as a shared queue.Publisher interface)
-// so this branch does not depend on the queue-abstraction work in the
-// parallel #45 line.
+// scale-up queue publisher. Satisfied by queue.Publisher (any cloud).
 type scaleUpPublisher interface {
-	Publish(ctx context.Context, msg *internalsqs.ScaleUpMessage) error
+	Publish(ctx context.Context, m queue.Msg) error
 }
 
 // lifecyclePublisher is the minimal surface the Handler needs from the
-// lifecycle queue publisher. *internalsqs.LifecyclePublisher satisfies this.
+// lifecycle queue publisher. Satisfied by queue.Publisher (any cloud).
 type lifecyclePublisher interface {
-	Publish(ctx context.Context, msg *lifecycle.Message) error
+	Publish(ctx context.Context, m queue.Msg) error
 }
 
 // Handler dispatches GitHub workflow_job webhook events to the correct
@@ -97,15 +92,16 @@ func (h *Handler) handleQueued(ctx context.Context, result *ParseResult) Respons
 		return Response{Status: 200, Body: "OK"}
 	}
 
-	msg := &internalsqs.ScaleUpMessage{
+	msg := &queue.ScaleUpMessage{
 		EventAction:    result.Action,
 		JobID:          result.Event.WorkflowJob.ID,
 		RunID:          result.Event.WorkflowJob.RunID,
 		RepositoryFull: result.Event.Repository.FullName,
 		Labels:         result.Event.WorkflowJob.Labels,
 		InstallationID: result.Event.Installation.ID,
+		Source:         queue.SourceWebhook,
 	}
-	if err := h.ScaleUpPublisher.Publish(ctx, msg); err != nil {
+	if err := queue.PublishScaleUp(ctx, h.ScaleUpPublisher, msg); err != nil {
 		return Response{Status: 500, Body: "Queue error"}
 	}
 	return Response{Status: 200, Body: "OK"}
@@ -123,14 +119,14 @@ func (h *Handler) handleLifecycle(ctx context.Context, result *ParseResult) Resp
 		return Response{Status: 500, Body: "Lifecycle publisher not configured"}
 	}
 
-	msg := &lifecycle.Message{
+	msg := &queue.LifecycleMessage{
 		JobID:      result.Event.WorkflowJob.ID,
 		Repo:       result.Event.Repository.FullName,
 		RunnerID:   result.Event.WorkflowJob.RunnerID,
 		Action:     result.Action,
 		Conclusion: result.Event.WorkflowJob.Conclusion,
 	}
-	if err := h.LifecyclePublisher.Publish(ctx, msg); err != nil {
+	if err := queue.PublishLifecycle(ctx, h.LifecyclePublisher, msg); err != nil {
 		return Response{Status: 500, Body: "Queue error"}
 	}
 	return Response{Status: 202, Body: "Accepted"}

@@ -81,7 +81,7 @@ jobs:
 
       - name: Packer validate
         working-directory: infra/packer
-        run: packer validate -var "runner_version=${{ inputs.runner_version || '2.332.0' }}" .
+        run: packer validate -only=amazon-ebs.jit-runner -var "runner_version=${{ inputs.runner_version || '2.332.0' }}" .
 
       - name: Disable block public access for AMIs
         if: github.event_name != 'pull_request' && (inputs.distribute == true || inputs.distribute == '')
@@ -102,7 +102,8 @@ jobs:
           NODE_MAJOR="${{ inputs.node_major_version || '22' }}"
           JIT_VERSION="${{ steps.version.outputs.version }}"
 
-          ARGS="-var runner_version=${RUNNER_VERSION}"
+          ARGS="-only=amazon-ebs.jit-runner"
+          ARGS="${ARGS} -var runner_version=${RUNNER_VERSION}"
           ARGS="${ARGS} -var go_version=${GO_VERSION}"
           ARGS="${ARGS} -var node_major_version=${NODE_MAJOR}"
           ARGS="${ARGS} -var jit_runners_version=${JIT_VERSION}"

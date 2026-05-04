@@ -62,6 +62,7 @@ resource "aws_lambda_function" "scaleup" {
       EC2_SECURITY_GROUP_ID             = aws_security_group.runner.id
       EC2_IAM_INSTANCE_PROFILE          = aws_iam_instance_profile.runner.name
       EC2_DEFAULT_AMI                   = var.default_ami
+      DEFAULT_INSTANCE_TYPE             = var.default_instance_type
       LABEL_MAPPINGS                    = var.label_mappings
     }
   }

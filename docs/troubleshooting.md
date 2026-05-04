@@ -525,5 +525,336 @@ aws sqs send-message \
   --region us-east-2
 ```
 
-The scaleup function's idempotency guard (`Status == StatusRunning` → skip)
-ensures this is safe even if the original runner did register.
+Under the runner_id identity model (issue #52), each scaleup invocation registers a fresh JIT runner with a unique `runner_id` and launches a new EC2 instance — there is no `(repo, job_id)`-keyed idempotency check that could short-circuit a manual re-enqueue. If the prior runner is still alive when you re-enqueue, scaledown's `Scan`-based stale-runner sweep reaps the abandoned instance after `StaleThresholdMinutes`. This is generally what you want for a manual reset.
+
+## How runners bind to jobs
+
+This subsection documents what GitHub actually guarantees about JIT runner-to-job binding, so future maintainers do not re-make the assumption that produced issue #52.
+
+### What GitHub guarantees
+
+The endpoint `POST /repos/{owner}/{repo}/actions/runners/generate-jitconfig` accepts only:
+
+- `name` — a cosmetic identifier (any string, no semantic binding).
+- `runner_group_id` — group membership.
+- `labels` — array of labels the runner advertises.
+- `work_folder` — optional working directory hint for the runner agent.
+
+There is **no** `job_id` parameter and **no** `workflow_run_id` parameter. The endpoint guarantees: *"when a runner registers using this API it will only be allowed to run a single job before being automatically removed from the repository, organization, or enterprise."*
+
+That single job is **whichever queued job whose labels match first** — not job-locked, not workflow_run-locked.
+
+### What this means for jit-runners
+
+- Each `workflow_job=queued` event triggers one `generate-jitconfig` call and one EC2 spot launch. GitHub returns a unique int64 `runner_id` per call.
+- DynamoDB records are keyed on the stringified `runner_id` (the only stable identifier post-registration). `job_id` and `workflow_run_id` are stored as observability metadata only.
+- When a runner comes online, GitHub assigns it one of the queued matching jobs **non-deterministically**. The runner whose name happens to encode `job_id=A` may execute `job_id=B`. Total job count drains, but pairing is set-level, not name-level.
+- Lifecycle webhooks (`workflow_job=in_progress`, `workflow_job=completed`) carry the `runner_id` of the runner that actually executed the job. Because we key DDB on `runner_id`, every webhook resolves its own record exactly once.
+
+### Why the runner name is `jit-<uuidv4>`
+
+The previous form `jit-<job_id>` implied a binding GitHub does not enforce. Future readers must not assume the trailing component of a JIT runner name is meaningful. A UUID is opaque by construction.
+
+### References
+
+- [REST API: self-hosted runners](https://docs.github.com/en/rest/actions/self-hosted-runners) — `generate-jitconfig` request body.
+- [GitHub Changelog: Just-in-time self-hosted runners (2023-06-02)](https://github.blog/changelog/2023-06-02-github-actions-just-in-time-self-hosted-runners/).
+- Issue [devopsfactory-io/jit-runners#52](https://github.com/devopsfactory-io/jit-runners/issues/52) and the design spec at `repositories/zettelkasten/Projects/jit-runners/specs/2026-05-02-runner-id-realignment-design.md`.
+
+## Debugging silent runner failures
+
+A "silent runner failure" is the case where an EC2 spot instance launches, the runner agent exits within seconds, and the instance terminates without ever picking up its assigned job. The first symptom is usually a CI job stuck in `queued` for minutes despite `scaleup` reporting a successful launch.
+
+### Quick check: did silent failures fire?
+
+```bash
+aws cloudwatch get-metric-statistics \
+  --namespace JitRunners/RunnerAgent \
+  --metric-name SilentFailures \
+  --start-time $(date -u -v-1H +%FT%TZ) \
+  --end-time $(date -u +%FT%TZ) \
+  --period 300 \
+  --statistics Sum
+```
+
+A non-zero `Sum` means at least one runner emitted `JIT_NO_JOB_PICKUP` in the past hour.
+
+### Find the affected runner_id
+
+```bash
+aws logs filter-log-events \
+  --log-group-name /jit-runners/userdata \
+  --filter-pattern '"JIT_NO_JOB_PICKUP"' \
+  --start-time $(($(date +%s) - 3600))000 \
+  --query 'events[].{ts:timestamp,msg:message}' \
+  --output table
+```
+
+Each match contains the `runner_id` and the `runtime` in seconds.
+
+### Inspect the runner-agent diag logs
+
+The CloudWatch agent ships `_diag/Runner_*.log` and `_diag/Worker_*.log` to `/jit-runners/runner-agent`, stream `<runner_id>/<instance_id>`:
+
+```bash
+aws logs tail /jit-runners/runner-agent --since 1h --filter-pattern '"<runner_id>"'
+```
+
+Or open the AWS Console: CloudWatch → Log groups → `/jit-runners/runner-agent` → log stream prefixed `<runner_id>/`.
+
+### Enabling runner-agent debug logs
+
+The runner agent (`actions/runner`) reads `ACTIONS_RUNNER_DEBUG` and `ACTIONS_STEP_DEBUG` from the GitHub repo/org **secrets or variables** at job-pickup time, NOT from the runner instance's process environment. As a result, setting these env vars in the EC2 userdata or via SSM has no effect on the runner agent's log level.
+
+To get debug-level logs from a JIT runner, use one of:
+
+#### Option A — Workflow-level env injection (recommended, no infra)
+
+Add to the workflow YAML:
+
+```yaml
+jobs:
+  my-job:
+    runs-on: [self-hosted, large]
+    env:
+      ACTIONS_RUNNER_DEBUG: "true"
+      ACTIONS_STEP_DEBUG: "true"
+    steps:
+      - run: ...
+```
+
+The runner agent picks these up from the job context at job start.
+
+#### Option B — Repository-level secret/variable
+
+In the GitHub UI: **Settings → Secrets and variables → Actions → Variables**, add `ACTIONS_RUNNER_DEBUG=true` and `ACTIONS_STEP_DEBUG=true`. Effective for ALL workflow runs in the repo. Remove when done — these are noisy.
+
+The CloudWatch agent in the AMI continues to forward `_diag/*.log` regardless of the runner's log level, so option A's debug output reaches your operator dashboard the same way INFO output does.
+
+**See issue [#61](https://github.com/devopsfactory-io/jit-runners/issues/61) for the historical context.** The previous SSM-based toggle (`/jit-runners/runner-log-level`) was removed in PR #46 because the underlying mechanism never worked.
+
+### Reproducing a silent failure for testing
+
+To exercise the silent-failure path on demand without a real workload:
+
+1. Generate a JIT config: `gh api -X POST repos/<owner>/<repo>/actions/runners/generate-jitconfig -f name=test -f labels[]=self-hosted -F runner_group_id=1`. Capture the `runner.id`.
+2. Immediately revoke it: `gh api -X DELETE repos/<owner>/<repo>/actions/runners/<runner.id>`.
+3. Send a synthetic SQS message to the scaleup queue carrying the revoked `encoded_jit_config`. A new spot instance launches, registers nothing, exits, and emits `JIT_NO_JOB_PICKUP`.
+
+## Stranded queued jobs
+
+A "stranded queued job" is a workflow_job stuck in `queued` status indefinitely. Pre-issue #62, this happened because GitHub's matcher pairs runners with any queued matching job (often older stranded ones, not the specific job whose `queued` event triggered the runner's launch). The rebalancer Lambda closes this gap by periodically re-publishing `ScaleUpMessage`s for any queue depth not covered by pending runners.
+
+The rebalancer iterates over **repos with recent activity**: it scans the DynamoDB runner records and selects every repo whose latest record was launched in the past 7 days. A repo with no recent record cannot have stranded queued jobs in our system (the drift cycle requires that scaleup already attempted to launch, which writes a record). This bounds per-cycle GitHub API calls to ~1 per active repo, keeping us well under the installation rate limit even for orgs with hundreds of repos.
+
+### Quick check: is the rebalancer healthy?
+
+```bash
+aws logs tail /aws/lambda/jit-runners-rebalancer --since 10m --filter-pattern '"cycle complete"' --format short
+```
+
+Expected: per repo, a `cycle complete repo=<owner/repo> demand=N supply=M published=K label_sets=L` line, plus a single `tick complete repos=R errors=E` summary line, every minute. `published=K` should be 0 most of the time per repo and non-zero only when there's actual drift to recover. `errors=E` should normally be 0; non-zero means one or more repos hit a transient GitHub outage and the next tick will retry.
+
+### Find currently stranded jobs (operator triage)
+
+```bash
+gh api repos/devopsfactory-io/jit-runners/actions/runs?status=queued --jq '.workflow_runs[] | "\(.id)  \(.name)  \(.created_at)"'
+```
+
+For each queued run, list its queued jobs:
+
+```bash
+gh api repos/devopsfactory-io/jit-runners/actions/runs/<RUN_ID>/jobs --jq '.jobs[] | select(.status == "queued") | "  \(.id)  \(.name)  labels=\(.labels)"'
+```
+
+If the rebalancer is healthy and there are still stranded jobs older than ~5 minutes, escalate.
+
+### Verify scaleup is making demand-aware decisions
+
+```bash
+aws logs tail /aws/lambda/jit-runners-scaleup --since 10m --filter-pattern '"scaleup: skip"' --format short
+```
+
+A small number of skips per CI cycle is normal — they mean the webhook path correctly decided not to over-launch. A large number (every webhook skipping) suggests supply is already saturated; check whether legitimate demand is being met.
+
+### Manually fire a rebalance
+
+```bash
+aws lambda invoke --function-name jit-runners-rebalancer --invocation-type RequestResponse /tmp/rebalancer-out.json
+cat /tmp/rebalancer-out.json
+```
+
+Useful when investigating stranded jobs and you don't want to wait for the next 1-minute cycle.
+
+One invocation rebalances every repo the App installation can access, not just one.
+
+### Tuning the cadence
+
+If drift recovery feels too slow, the cadence can be tightened (subject to AWS::Events::Rule's `rate(1 minute)` minimum). Going below 1 minute requires `AWS::Scheduler::Schedule` (newer EventBridge Scheduler service); see issue #62 for the trade-off discussion.
+
+### References
+
+- Issue [#62](https://github.com/devopsfactory-io/jit-runners/issues/62) — diagnosis and design.
+- Spec: `repositories/zettelkasten/Projects/jit-runners/specs/2026-05-02-effective-scaleup-design.md`.
+
+## GCP-specific issues
+
+The following symptoms are GCP-specific. AWS-only operators can skip this section.
+
+### Cloud Build stuck in BUILDING state
+
+#### Symptom
+
+After `tofu apply`, one or more Cloud Run functions show `LastUpdateStatus: Pending` or never reach `Ready`. Cloud Build is rebuilding the function image and either hanging or failing.
+
+#### Diagnosis
+
+```bash
+gcloud builds list --filter="source.storageSource.bucket~jit-runners-functions" --limit=5
+gcloud builds log <build-id>
+```
+
+#### Common causes
+
+- **First-apply timing**: Buildpacks build can take 5-10 minutes per function on first deploy. Wait it out before declaring failure.
+- **Insufficient quota**: Cloud Build has per-project concurrency limits. Check quotas at `https://console.cloud.google.com/iam-admin/quotas` filtered to `cloudbuild.googleapis.com`.
+- **Bad Go module fetch**: Cloud Build cannot reach the Go module proxy from the build VM if egress is heavily restricted. Default Cloud Build VPC egress works fine; investigate only if you've customized.
+
+#### Resolution
+
+If a build is genuinely hung (>20 min), cancel it and re-trigger:
+
+```bash
+gcloud builds cancel <build-id>
+cd infra/terraform-gcp
+tofu apply -replace='google_cloudfunctions2_function.<func>'
+```
+
+### Eventarc trigger not delivering messages
+
+#### Symptom
+
+Pub/Sub messages publish to `${prefix}-jobs` or `${prefix}-lifecycle` topics, but the corresponding scaleup/lifecycle Cloud Run functions never invoke. Per-topic message backlog grows.
+
+#### Diagnosis
+
+```bash
+# Check trigger health
+gcloud eventarc triggers describe ${prefix}-scaleup --location=us-central1
+gcloud eventarc triggers describe ${prefix}-lifecycle --location=us-central1
+
+# Check the bound subscription's backlog
+gcloud pubsub subscriptions describe ${prefix}-jobs-scaleup \
+  --format='value(numUndeliveredMessages,deliveryAttempts)'
+```
+
+#### Common causes
+
+- **Eventarc bound to a different subscription** (D13 verification gap). The trigger may be using its own auto-created managed subscription, not the explicit one declared in `pubsub.tf`. The DLQ + retry policy on the explicit sub doesn't apply.
+- **Eventarc invoker SA missing `roles/run.invoker`**: usually self-correcting since `eventarc.tf` declares the binding. Verify with:
+
+  ```bash
+  gcloud run services get-iam-policy ${prefix}-scaleup --region=us-central1
+  ```
+
+#### Resolution
+
+If Eventarc is using its own managed subscription, the workaround is to inspect failed messages via the inspector subscription on the topic and accept that the explicit DLQ + retry policy isn't on the active path:
+
+```bash
+gcloud pubsub subscriptions pull ${prefix}-jobs-dlq-inspector --auto-ack --limit=10
+```
+
+For a fix, file a follow-up issue and consider switching to bare push subscriptions (the alternative D3 path).
+
+### Firestore singleton conflict
+
+#### Symptom
+
+`tofu apply` fails on `google_firestore_database.default` with a 409 Conflict or "database already exists" error.
+
+#### Root cause
+
+Firestore Native is a project-level singleton. The module's `var.create_firestore_database` flag was left at the default `false`, but no Firestore database actually exists in the project. OR the flag is `true` but a database already exists.
+
+#### Resolution
+
+If the project has no Firestore yet:
+
+```bash
+# In terraform.tfvars: create_firestore_database = true
+tofu apply
+```
+
+If the project already has Firestore:
+
+```bash
+# In terraform.tfvars: create_firestore_database = false
+tofu apply
+```
+
+The `google_firestore_field` TTL policy works against the singleton database regardless of who created it, so flipping this flag in either direction is safe.
+
+### Function source bucket out of date
+
+#### Symptom
+
+After bumping `var.release_tag`, the Cloud Run functions still serve the old version. `gcloud beta run services describe` shows the prior revision.
+
+#### Diagnosis
+
+```bash
+gcloud storage ls gs://${prefix}-functions-*/${var.release_tag}/
+```
+
+If this returns "no objects found", the `data.http` → `local_file` → `google_storage_bucket_object` chain failed to populate the new tag's prefix.
+
+#### Common causes
+
+- **GitHub Release missing the zip**: the release's assets must include `webhook.zip`, `scaleup.zip`, `scaledown.zip`, `lifecycle.zip`, `rebalancer.zip`. Verify at `https://github.com/devopsfactory-io/jit-runners/releases/tag/<tag>`.
+- **Network failure during `tofu plan`**: `data.http` re-fetches each plan; transient network errors fail plan. Re-run.
+- **GitHub rate limit**: unauthenticated GitHub fetches are rate-limited (currently 60 requests/hour from a given IP). If apply runs many times in a short window, you may hit the limit. Wait for the limit window to reset, or run apply from a different egress IP.
+
+#### Resolution
+
+Force re-fetch:
+
+```bash
+cd infra/terraform-gcp
+rm -rf .cache/<release_tag>      # clear the local Terraform-managed cache
+tofu apply -replace='local_file.function_zips["webhook"]'
+# Repeat for the 4 other functions if needed
+```
+
+### Workload Identity Federation auth failure in CI
+
+#### Symptom
+
+`.github/workflows/gce-image-build.yml` fails at the "Authenticate to Google Cloud" step with `permission_denied` or `invalid_grant`.
+
+#### Root cause
+
+Per spec D14, image-build CI auth uses Workload Identity Federation in the maintainer's personal GCP project, set up out-of-band. The repo secrets `GCE_BUILD_WIF_PROVIDER` and `GCE_BUILD_SA_EMAIL` must be populated for the workflow to authenticate.
+
+#### Resolution
+
+If you're a maintainer who hasn't run the gcloud bootstrap yet:
+
+1. Set up a Workload Identity Pool + Provider in your personal GCP project.
+2. Create a service account with `compute.imageUser`, `compute.instanceAdmin.v1`, `iam.serviceAccountUser` roles bound to the Pool.
+3. Set repo secrets:
+
+   ```bash
+   gh secret set GCE_BUILD_WIF_PROVIDER --body "projects/<num>/locations/global/workloadIdentityPools/jit-runners-build/providers/github"
+   gh secret set GCE_BUILD_SA_EMAIL --body "[email protected]"
+   ```
+
+If you're a fork maintainer who wants their own image build pipeline: do the same in your fork's project, set your fork's repo secrets, and the workflow runs against your project.
+
+### References
+
+- Spec D3 (Eventarc + CloudEvents internal-only ingress).
+- Spec D11 (GitHub Releases as source of truth via `data.http`).
+- Spec D12 (Firestore singleton feature flag).
+- Spec D13 (Pre-created Pub/Sub subscriptions verification step).
+- Spec D14 (Image-build CI identity is out-of-band).

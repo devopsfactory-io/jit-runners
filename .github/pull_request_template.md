@@ -34,4 +34,4 @@
 
 - **Scope:** <!-- e.g. lambda/webhook, lambda/scaleup, infra/terraform, docs, AGENTS.md -->
 - **Type:** <!-- e.g. feat, fix, docs, refactor -->
-- **Key files/areas:** <!-- e.g. lambda/internal/github/client.go, infra/terraform/ec2.tf, docs/getting-started-terraform.md -->
+- **Key files/areas:** <!-- e.g. lambda/internal/github/client.go, infra/terraform/ec2.tf, docs/getting-started-aws.md -->

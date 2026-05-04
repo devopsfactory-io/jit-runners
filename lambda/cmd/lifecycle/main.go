@@ -2,14 +2,9 @@
 // SQS messages (workflow_job in_progress / completed) and applies the
 // state-machine transition + GitHub deregister side-effect.
 //
-// Construction mirrors cmd/scaledown and cmd/scaleup: load AWS config,
-// build a DynamoDB client + *runner.Store, wrap it in StateAdapter to
-// satisfy the cloud-agnostic state.RunnerStore the lifecycle handler
-// consumes, mint an installation token at startup for DeregisterRunner.
-//
-// We intentionally do not introduce a provider.Bundle abstraction here —
-// that lives in the parallel #45 cloud-abstraction line and would be a
-// merge hazard for #47.
+// Construction mirrors cmd/scaledown and cmd/scaleup: load config, build
+// the provider bundle via provider.New, and mint an installation token at
+// startup for DeregisterRunner.
 package main
 
 import (
@@ -19,24 +14,43 @@ import (
 	"os"
 	"sync"
 
+	funcframework "github.com/GoogleCloudPlatform/functions-framework-go/funcframework"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	cloudevents "github.com/cloudevents/sdk-go/v2"
 
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
+	gcpruntime "github.com/devopsfactory-io/jit-runners/lambda/internal/gcp/runtime"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/github"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/lifecycle"
-	"github.com/devopsfactory-io/jit-runners/lambda/internal/runner"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/provider"
 )
 
 var (
 	cfgOnce sync.Once
 	appCfg  *appconfig.Config
 	cfgErr  error
+
+	bundleOnce sync.Once
+	bundleRef  *provider.Bundle
+	bundleErr  error
 )
 
 func main() {
+	if os.Getenv("CLOUD_PROVIDER") == "gcp" {
+		ctx := context.Background()
+		if err := funcframework.RegisterCloudEventFunctionContext(ctx, "/", gcpHandler); err != nil {
+			log.Fatalf("funcframework.RegisterCloudEventFunctionContext: %v", err)
+		}
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "8080"
+		}
+		if err := funcframework.Start(port); err != nil {
+			log.Fatalf("funcframework.Start: %v", err)
+		}
+		return
+	}
 	lambda.Start(handler)
 }
 
@@ -46,13 +60,12 @@ func handler(ctx context.Context, ev events.SQSEvent) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	awsCfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		return fmt.Errorf("load AWS config: %w", err)
+	bundleOnce.Do(func() {
+		bundleRef, bundleErr = provider.New(ctx, os.Getenv("CLOUD_PROVIDER"))
+	})
+	if bundleErr != nil {
+		return fmt.Errorf("provider.New: %w", bundleErr)
 	}
-
-	store := runner.NewStore(dynamodb.NewFromConfig(awsCfg), cfg.TableName)
-	adapter := runner.NewStateAdapter(store)
 
 	// Mint a real installation token when GITHUB_INSTALLATION_ID is set.
 	// Without it we fall back to a tokenless client and DeregisterRunner
@@ -64,7 +77,7 @@ func handler(ctx context.Context, ev events.SQSEvent) error {
 		return fmt.Errorf("github client: %w", err)
 	}
 
-	h := lifecycle.New(adapter, ghClient, log.Default())
+	h := lifecycle.New(bundleRef.State, ghClient, log.Default())
 
 	for _, rec := range ev.Records {
 		if err := h.HandleSQS(ctx, []byte(rec.Body)); err != nil {
@@ -72,6 +85,36 @@ func handler(ctx context.Context, ev events.SQSEvent) error {
 		}
 	}
 	return nil
+}
+
+// gcpHandler is the GCP Eventarc / Pub/Sub CloudEvents entry point. Eventarc
+// delivers exactly one Pub/Sub message per invocation; we decode the envelope
+// and call lifecycle.Handler.HandleSQS with the raw message body, reusing the
+// same processing path as the AWS branch.
+func gcpHandler(ctx context.Context, e cloudevents.Event) error {
+	cfg, err := loadConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	bundleOnce.Do(func() {
+		bundleRef, bundleErr = provider.New(ctx, "gcp")
+	})
+	if bundleErr != nil {
+		return fmt.Errorf("provider.New: %w", bundleErr)
+	}
+
+	ghClient, err := newGitHubClient(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("github client: %w", err)
+	}
+
+	body, err := gcpruntime.DecodePubSubData(e)
+	if err != nil {
+		return fmt.Errorf("decode cloudevent: %w", err)
+	}
+
+	h := lifecycle.New(bundleRef.State, ghClient, log.Default())
+	return h.HandleSQS(ctx, body)
 }
 
 // newGitHubClient builds a *github.Client. When cfg.InstallationID is set

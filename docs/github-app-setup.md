@@ -71,12 +71,12 @@ Note the ARN from the output -- you'll need it as a deployment parameter.
 
 ## 6. Set the Webhook URL
 
-After deploying jit-runners infrastructure (via Terraform or CloudFormation), you'll get a Webhook URL as an output. Go back to the GitHub App settings and set the **Webhook URL** to this value.
+After deploying jit-runners infrastructure (AWS or GCP — see Next Steps below), you'll get a Webhook URL as an output. Go back to the GitHub App settings and set the **Webhook URL** to this value.
 
 ## Next Steps
 
-- Deploy with Terraform/OpenTofu: [Getting Started with Terraform](getting-started-terraform.md)
-- Deploy with CloudFormation: [Getting Started with CloudFormation](getting-started-cloudformation.md)
+- Deploy on AWS (OpenTofu/Terraform or CloudFormation): [Getting Started on AWS](getting-started-aws.md)
+- Deploy on GCP (OpenTofu/Terraform): [Getting Started on GCP](getting-started-gcp.md)
 
 ## Troubleshooting
 

@@ -52,9 +52,9 @@ variable "default_ami" {
 }
 
 variable "default_instance_type" {
-  description = "Default EC2 instance type for runners"
+  description = "Default EC2 instance type for runners when no LABEL_MAPPINGS entry matches the requested labels."
   type        = string
-  default     = "t3.medium"
+  default     = "t3.large"
 }
 
 variable "label_mappings" {
@@ -88,6 +88,11 @@ variable "scaledown_lambda_s3_key" {
 variable "lifecycle_lambda_s3_key" {
   description = "S3 key for the lifecycle Lambda zip"
   type        = string
+}
+
+variable "rebalancer_lambda_s3_key" {
+  type        = string
+  description = "S3 key for the rebalancer Lambda zip (e.g. v1.0.0-rc.4/rebalancer.zip)."
 }
 
 # --- Scale-down ---

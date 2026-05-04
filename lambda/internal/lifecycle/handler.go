@@ -5,18 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
 )
-
-// runnerID computes the DDB primary key from repo + jobID. Mirrors the
-// scaleup helper. A future refactor (Phase B3 in the plan) consolidates
-// this in the runner package; for now it is local to lifecycle to keep
-// this branch self-contained.
-func runnerID(repo string, jobID int64) string {
-	return fmt.Sprintf("%s#%d", repo, jobID)
-}
 
 // nextStatus is the forward-only state-machine transition table.
 // (current, action) -> (next, ok). ok=false means: drop the message
@@ -44,17 +38,33 @@ func nextStatus(current, action string) (next string, ok bool) {
 }
 
 // HandleSQS processes one SQS record body. Idempotent.
+//
+// Lookups key on msg.RunnerID — the int64 GitHub returned from
+// generate-jitconfig and that GitHub populates in workflow_job webhook
+// deliveries. Per issue #52, this is the only stable runner identifier;
+// the prior (repo, job_id) lookup was racy under concurrent jobs.
 func (h *Handler) HandleSQS(ctx context.Context, body []byte) error {
-	var msg Message
+	var msg queue.LifecycleMessage
 	if err := json.Unmarshal(body, &msg); err != nil {
 		return fmt.Errorf("lifecycle: parse: %w", err)
 	}
 
-	key := runnerID(msg.Repo, msg.JobID)
+	if msg.RunnerID == 0 {
+		// Defensive: GitHub did not populate runner_id in the webhook
+		// payload. There is no record to update; drop the message
+		// without a lookup so we do not pollute logs with bogus
+		// "no record at key 0" entries.
+		h.Logger.Printf("lifecycle: drop %s job=%d action=%s: missing runner_id",
+			msg.Repo, msg.JobID, msg.Action)
+		return nil
+	}
+
+	key := strconv.FormatInt(msg.RunnerID, 10)
 	rec, err := h.Store.Get(ctx, key)
 	switch {
 	case errors.Is(err, state.ErrNotFound):
-		h.Logger.Printf("lifecycle: drop %s job=%d action=%s: no record", msg.Repo, msg.JobID, msg.Action)
+		h.Logger.Printf("lifecycle: drop %s job=%d runner=%d action=%s: no record",
+			msg.Repo, msg.JobID, msg.RunnerID, msg.Action)
 		return nil
 	case err != nil:
 		return fmt.Errorf("lifecycle: get %s: %w", key, err)
@@ -62,8 +72,8 @@ func (h *Handler) HandleSQS(ctx context.Context, body []byte) error {
 
 	next, ok := nextStatus(rec.Status, msg.Action)
 	if !ok {
-		h.Logger.Printf("lifecycle: drop %s job=%d action=%s: backward transition from %s",
-			msg.Repo, msg.JobID, msg.Action, rec.Status)
+		h.Logger.Printf("lifecycle: drop %s job=%d runner=%d action=%s: backward transition from %s",
+			msg.Repo, msg.JobID, msg.RunnerID, msg.Action, rec.Status)
 		return nil
 	}
 	if next == rec.Status {

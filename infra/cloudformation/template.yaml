@@ -30,6 +30,10 @@ Parameters:
     Type: String
     Description: S3 key for the lifecycle Lambda zip.
 
+  RebalancerLambdaS3Key:
+    Type: String
+    Description: S3 key for the rebalancer Lambda zip (e.g. v1.0.0-rc.4/rebalancer.zip).
+
   WebhookSecretArn:
     Type: String
     Description: ARN of the Secrets Manager secret containing the GitHub App webhook secret.
@@ -49,6 +53,11 @@ Parameters:
   DefaultAMI:
     Type: AWS::EC2::Image::Id
     Description: Default AMI ID for runner instances (Amazon Linux 2023 recommended).
+
+  DefaultInstanceType:
+    Type: String
+    Default: t3.large
+    Description: Default EC2 instance type for runners when no LabelMappings entry matches.
 
   LabelMappings:
     Type: String
@@ -187,6 +196,20 @@ Resources:
                 Condition:
                   StringEquals:
                     "ec2:ResourceTag/managed-by": jit-runners
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource:
+                  - !GetAtt RunnerAgentLogGroup.Arn
+                  - !GetAtt RunnerUserdataLogGroup.Arn
+                  - !Sub "${RunnerAgentLogGroup.Arn}:log-stream:*"
+                  - !Sub "${RunnerUserdataLogGroup.Arn}:log-stream:*"
 
   RunnerInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -339,7 +362,6 @@ Resources:
                 Resource:
                   - !Ref WebhookSecretArn
                   - !Ref PrivateKeySecretArn
-
   ScaleUpFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -365,6 +387,7 @@ Resources:
           EC2_SECURITY_GROUP_ID: !Ref RunnerSecurityGroup
           EC2_IAM_INSTANCE_PROFILE: !Ref RunnerInstanceProfile
           EC2_DEFAULT_AMI: !Ref DefaultAMI
+          DEFAULT_INSTANCE_TYPE: !Ref DefaultInstanceType
           LABEL_MAPPINGS: !Ref LabelMappings
 
   ScaleUpLogGroup:
@@ -487,6 +510,39 @@ Resources:
                 Action: secretsmanager:GetSecretValue
                 Resource: !Ref PrivateKeySecretArn
 
+  RebalancerLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-rebalancer-lambda"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: RebalancerLambdaPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt ScaleUpQueue.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                Resource: !GetAtt RunnersTable.Arn
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref WebhookSecretArn
+                  - !Ref PrivateKeySecretArn
+
   LifecycleFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -515,6 +571,61 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-lifecycle"
       RetentionInDays: 14
+
+  RebalancerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-rebalancer"
+      Description: Periodic re-publisher of ScaleUpMessages to drain stranded queued GitHub Actions jobs.
+      Runtime: provided.al2023
+      Handler: bootstrap
+      Architectures:
+        - x86_64
+      Timeout: 60
+      MemorySize: 256
+      # ReservedConcurrentExecutions: 1 omitted — the deploy account currently
+      # has the default Lambda concurrency floor (10), so any reservation
+      # rejects with "decreases UnreservedConcurrentExecutions below minimum".
+      # Re-add once the account quota is raised. Risk while omitted: if a
+      # cycle takes >60s, two concurrent ticks could double-publish; bounded
+      # cost — redundant runners get reaped by scaledown's stale sweep.
+      Role: !GetAtt RebalancerLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref RebalancerLambdaS3Key
+      Environment:
+        Variables:
+          GITHUB_APP_ID: !Ref GitHubAppId
+          GITHUB_INSTALLATION_ID: !Ref GitHubInstallationId
+          GITHUB_APP_PRIVATE_KEY_SECRET_ARN: !Ref PrivateKeySecretArn
+          GITHUB_APP_WEBHOOK_SECRET_ARN: !Ref WebhookSecretArn
+          DYNAMODB_TABLE_NAME: !Ref RunnersTable
+          SQS_QUEUE_URL: !Ref ScaleUpQueue
+
+  RebalancerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-rebalancer"
+      RetentionInDays: 14
+
+  RebalancerSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${AWS::StackName}-rebalancer-schedule"
+      Description: Fires the rebalancer Lambda every 1 minute to drain stranded queued jobs.
+      ScheduleExpression: rate(1 minute)
+      State: ENABLED
+      Targets:
+        - Id: RebalancerTarget
+          Arn: !GetAtt RebalancerFunction.Arn
+
+  RebalancerSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref RebalancerFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RebalancerSchedule.Arn
 
   LifecycleFunctionEventSource:
     Type: AWS::Lambda::EventSourceMapping
@@ -556,6 +667,32 @@ Resources:
       Target:
         Arn: !GetAtt ScaleDownFunction.Arn
         RoleArn: !GetAtt SchedulerRole.Arn
+
+  # --- Diagnostic logging (issue #55) ---
+
+  RunnerAgentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /jit-runners/runner-agent
+      RetentionInDays: 14
+
+  RunnerUserdataLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /jit-runners/userdata
+      RetentionInDays: 14
+
+  SilentFailureMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: RunnerUserdataLogGroup
+    Properties:
+      LogGroupName: /jit-runners/userdata
+      FilterPattern: "JIT_NO_JOB_PICKUP"
+      MetricTransformations:
+        - MetricName: SilentFailures
+          MetricNamespace: JitRunners/RunnerAgent
+          MetricValue: "1"
+          DefaultValue: 0
 
 Outputs:
   WebhookUrl:

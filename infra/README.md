@@ -1,42 +1,49 @@
 # Infrastructure
 
-jit-runners infrastructure can be deployed using either Terraform/OpenTofu or CloudFormation. Both options create the same set of AWS resources.
+jit-runners infrastructure can be deployed on either AWS or GCP. The control plane (5 serverless functions, a job queue, a state store, a runner-VM launcher) is identical across clouds; only the underlying provider services differ.
 
 ## Deployment Options
 
-| Option | Directory | Guide |
-| ------ | --------- | ----- |
-| **Terraform / OpenTofu** | [`terraform/`](terraform/) | [Getting Started with Terraform](../docs/getting-started-terraform.md) |
-| **CloudFormation** | [`cloudformation/`](cloudformation/) | [Getting Started with CloudFormation](../docs/getting-started-cloudformation.md) |
+| Cloud | IaC tool | Directory | Guide |
+| ----- | -------- | --------- | ----- |
+| **AWS** | Terraform / OpenTofu | [`terraform/`](terraform/) | [Getting Started on AWS](../docs/getting-started-aws.md) |
+| **AWS** | CloudFormation | [`cloudformation/`](cloudformation/) | [Getting Started on AWS](../docs/getting-started-aws.md) |
+| **GCP** | Terraform / OpenTofu | [`terraform-gcp/`](terraform-gcp/) | [Getting Started on GCP](../docs/getting-started-gcp.md) |
+
+The Packer template at [`packer/`](packer/) is shared across both clouds and produces either an AWS AMI (`amazon-ebs` source) or a GCE image (`googlecompute` source) from the same provisioning recipe.
 
 ## Resources Created
 
-Both deployment options provision:
+The five serverless functions (`webhook`, `scaleup`, `scaledown`, `lifecycle`, `rebalancer`) are mapped to per-cloud equivalents:
 
-- **API Gateway** (HTTP API) — public webhook endpoint for GitHub
-- **3 Lambda functions** — webhook, scale-up, scale-down (Go, `provided.al2023`)
-- **3 IAM roles** — one per Lambda with least-privilege policies
-- **SQS queue + DLQ** — decouples webhook from instance provisioning (30s delay)
-- **DynamoDB table** — runner state tracking with TTL auto-cleanup
-- **EC2 security group** — egress-only (HTTPS, HTTP, DNS) for runner instances
-- **EC2 IAM instance profile** — self-terminate permission only
-- **EventBridge Scheduler** — triggers scale-down every 5 minutes
-- **CloudWatch log groups** — 14-day retention for all Lambda functions
+| Component | AWS | GCP |
+| --------- | --- | --- |
+| Webhook ingress | API Gateway HTTP | Cloud Run function HTTPS URL |
+| Functions runtime | Lambda (`provided.al2023`) | Cloud Run functions Gen 2 (`go122`) |
+| Job queue | SQS + EventBridge schedule | Pub/Sub + Eventarc + Cloud Scheduler |
+| State store | DynamoDB on-demand | Firestore Native + TTL |
+| Secrets | AWS Secrets Manager | Secret Manager |
+| Runner VM | EC2 spot | GCE spot |
+| Periodic schedule | EventBridge (5 min, 1 min) | Cloud Scheduler (5 min, 1 min) |
 
 ## Prerequisites
 
-Before deploying, complete the [GitHub App Setup](../docs/github-app-setup.md) to create the required GitHub App and store secrets in AWS Secrets Manager.
+Before deploying, complete the [GitHub App Setup](../docs/github-app-setup.md) to create the required GitHub App and store the webhook secret + private key in your cloud's secret manager (AWS Secrets Manager or GCP Secret Manager).
 
 ## Architecture
 
 ```
 GitHub webhook (workflow_job)
-  → API Gateway (POST /webhook)
-    → Webhook Lambda (validate + parse + enqueue)
-      → SQS (30s delay)
-        → Scale-Up Lambda (JIT config + EC2 spot launch)
-          → EC2 Spot Instance (ephemeral JIT runner)
+  → Webhook function (validate + parse + enqueue)
+    → Jobs queue (SQS on AWS, Pub/Sub on GCP)
+      → Scaleup function (JIT config + spot VM launch)
+        → Spot VM (ephemeral JIT runner)
+    → Lifecycle queue (in_progress / completed events)
+      → Lifecycle function (state transitions, deregistration)
 
-EventBridge (every 5min)
-  → Scale-Down Lambda (cleanup stale/orphaned instances)
+Periodic schedule (every 5 min)
+  → Scaledown function (cleanup stale/orphaned instances)
+
+Periodic schedule (every 1 min)
+  → Rebalancer function (drift recovery, re-publish stranded jobs)
 ```

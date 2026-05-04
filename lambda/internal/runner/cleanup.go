@@ -2,18 +2,14 @@ package runner
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
-	"github.com/devopsfactory-io/jit-runners/lambda/internal/sqs"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/compute"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/queue"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/state"
 )
-
-// EC2Terminator abstracts EC2 instance termination for the cleanup path.
-// It is satisfied by *ec2.Launcher.
-type EC2Terminator interface {
-	Terminate(ctx context.Context, instanceIDs ...string) error
-}
 
 // ghClient is the narrow surface of the GitHub client used by Cleaner.
 // Defined locally so unit tests can fake it without importing the real
@@ -22,19 +18,24 @@ type ghClient interface {
 	DeregisterRunner(ctx context.Context, ownerRepo string, runnerID int64) error
 }
 
-// scaleupPublisher is the narrow surface of the SQS publisher used by
-// Cleaner to re-enqueue stale-pending records. Satisfied by *sqs.Publisher.
+// scaleupPublisher is the narrow surface of the queue publisher used by
+// Cleaner to re-enqueue stale-pending records. Satisfied by queue.Publisher
+// (any cloud).
 type scaleupPublisher interface {
-	Publish(ctx context.Context, msg *sqs.ScaleUpMessage) error
+	Publish(ctx context.Context, m queue.Msg) error
 }
 
 // Cleaner reaps stale runner records and (for stale-pending) re-enqueues a
 // fresh launch attempt with an attempt counter. Stale-running records are
 // terminated but NEVER re-enqueued — re-enqueueing a running record can
 // double-launch when GitHub may already consider the job done.
+//
+// Cleaner depends on the cloud-agnostic state.RunnerStore and
+// compute.Launcher interfaces. The concrete AWS implementations live under
+// internal/aws/{dynamo,ec2}.
 type Cleaner struct {
-	Store            *Store
-	Launcher         EC2Terminator
+	Store            state.RunnerStore
+	Launcher         compute.Launcher
 	GitHub           ghClient
 	ScaleUpPublisher scaleupPublisher
 
@@ -57,8 +58,8 @@ type Cleaner struct {
 // pending and running records respectively; maxReEnqueueAttempts caps the
 // number of times a stale-pending record may be re-published.
 func NewCleaner(
-	store *Store,
-	launcher EC2Terminator,
+	store state.RunnerStore,
+	launcher compute.Launcher,
 	gh ghClient,
 	pub scaleupPublisher,
 	staleMinutes, maxAgeMinutes, maxReEnqueueAttempts int,
@@ -105,18 +106,18 @@ func (c *Cleaner) Run(ctx context.Context) (*CleanupResult, error) {
 	result := &CleanupResult{}
 	now := c.now()
 
-	pending, err := c.Store.ListByStatus(ctx, StatusPending)
+	pending, err := c.Store.List(ctx, state.Filter{StatusEq: StatusPending})
 	if err != nil {
-		return result, err
+		return result, fmt.Errorf("list pending runners: %w", err)
 	}
-	staleCutoff := now.Add(-c.StaleAfter).Unix()
+	staleCutoff := now.Add(-c.StaleAfter)
 	c.sweepStalePending(ctx, pending, staleCutoff, now, result)
 
-	running, err := c.Store.ListByStatus(ctx, StatusRunning)
+	running, err := c.Store.List(ctx, state.Filter{StatusEq: StatusRunning})
 	if err != nil {
-		return result, err
+		return result, fmt.Errorf("list running runners: %w", err)
 	}
-	runCutoff := now.Add(-c.MaxAge).Unix()
+	runCutoff := now.Add(-c.MaxAge)
 	c.sweepStaleRunning(ctx, running, runCutoff, now, result)
 
 	return result, nil
@@ -126,13 +127,13 @@ func (c *Cleaner) Run(ctx context.Context) (*CleanupResult, error) {
 // terminate the EC2 instance (if any), deregister the GitHub runner (if
 // any), and either re-enqueue a fresh launch attempt or mark the record
 // terminal failed when the attempt budget is exhausted.
-func (c *Cleaner) sweepStalePending(ctx context.Context, records []*Record, cutoff int64, now time.Time, result *CleanupResult) {
-	for _, r := range records {
-		if r.CreatedAt >= cutoff {
+func (c *Cleaner) sweepStalePending(ctx context.Context, runners []state.Runner, cutoff time.Time, now time.Time, result *CleanupResult) {
+	for _, r := range runners {
+		if !r.LaunchedAt.Before(cutoff) {
 			continue
 		}
 		log.Printf("cleanup: terminating stale pending runner %s (instance %s, attempts=%d)",
-			r.RunnerID, r.InstanceID, r.ReEnqueueAttempts)
+			r.ID, r.InstanceID, r.ReEnqueueAttempts)
 
 		if err := c.terminateAndDeregister(ctx, r); err != nil {
 			result.Errors++
@@ -142,28 +143,28 @@ func (c *Cleaner) sweepStalePending(ctx context.Context, records []*Record, cuto
 
 		if r.ReEnqueueAttempts < c.MaxReEnqueueAttempts {
 			next := r.ReEnqueueAttempts + 1
-			msg := &sqs.ScaleUpMessage{
+			msg := &queue.ScaleUpMessage{
 				EventAction:       "queued",
 				JobID:             r.JobID,
-				RunID:             r.RunID,
 				RepositoryFull:    r.Repository,
 				Labels:            r.Labels,
+				Source:            queue.SourceWebhook,
 				ReEnqueueAttempts: next,
 			}
-			if err := c.ScaleUpPublisher.Publish(ctx, msg); err != nil {
-				log.Printf("cleanup: re-enqueue publish failed for %s: %v", r.RunnerID, err)
+			if err := queue.PublishScaleUp(ctx, c.ScaleUpPublisher, msg); err != nil {
+				log.Printf("cleanup: re-enqueue publish failed for %s: %v", r.ID, err)
 				result.Errors++
 				continue
 			}
 			failed := StatusFailed
 			at := now
 			attempts := next
-			if err := c.Store.Update(ctx, r.RunnerID, state.RunnerUpdate{
+			if err := c.Store.Update(ctx, r.ID, state.RunnerUpdate{
 				Status:            &failed,
 				ReEnqueueAttempts: &attempts,
 				LastAttemptAt:     &at,
 			}); err != nil {
-				log.Printf("cleanup: update after re-enqueue failed for %s: %v", r.RunnerID, err)
+				log.Printf("cleanup: update after re-enqueue failed for %s: %v", r.ID, err)
 				result.Errors++
 				continue
 			}
@@ -175,15 +176,15 @@ func (c *Cleaner) sweepStalePending(ctx context.Context, records []*Record, cuto
 		// re-enqueue: the message has been retried MaxReEnqueueAttempts
 		// times already and continued failure indicates a systemic issue
 		// that retries cannot resolve.
-		log.Printf("ERROR scaledown: re-enqueue exhausted for %s job=%d after %d attempts",
-			r.Repository, r.JobID, r.ReEnqueueAttempts)
+		log.Printf("ERROR scaledown: re-enqueue exhausted for %s after %d attempts",
+			r.ID, r.ReEnqueueAttempts)
 		failed := StatusFailed
 		at := now
-		if err := c.Store.Update(ctx, r.RunnerID, state.RunnerUpdate{
+		if err := c.Store.Update(ctx, r.ID, state.RunnerUpdate{
 			Status:        &failed,
 			LastAttemptAt: &at,
 		}); err != nil {
-			log.Printf("cleanup: update terminal failed for %s: %v", r.RunnerID, err)
+			log.Printf("cleanup: update terminal failed for %s: %v", r.ID, err)
 			result.Errors++
 			continue
 		}
@@ -196,12 +197,12 @@ func (c *Cleaner) sweepStalePending(ctx context.Context, records []*Record, cuto
 // failed. NEVER re-enqueue — a running record may correspond to a job that
 // GitHub already considers complete; re-enqueueing would risk a double
 // launch.
-func (c *Cleaner) sweepStaleRunning(ctx context.Context, records []*Record, cutoff int64, now time.Time, result *CleanupResult) {
-	for _, r := range records {
-		if r.CreatedAt >= cutoff {
+func (c *Cleaner) sweepStaleRunning(ctx context.Context, runners []state.Runner, cutoff time.Time, now time.Time, result *CleanupResult) {
+	for _, r := range runners {
+		if !r.LaunchedAt.Before(cutoff) {
 			continue
 		}
-		log.Printf("cleanup: reaping stale running runner %s (instance %s)", r.RunnerID, r.InstanceID)
+		log.Printf("cleanup: reaping stale running runner %s (instance %s)", r.ID, r.InstanceID)
 
 		if err := c.terminateAndDeregister(ctx, r); err != nil {
 			result.Errors++
@@ -209,11 +210,11 @@ func (c *Cleaner) sweepStaleRunning(ctx context.Context, records []*Record, cuto
 		}
 		failed := StatusFailed
 		at := now
-		if err := c.Store.Update(ctx, r.RunnerID, state.RunnerUpdate{
+		if err := c.Store.Update(ctx, r.ID, state.RunnerUpdate{
 			Status:        &failed,
 			LastAttemptAt: &at,
 		}); err != nil {
-			log.Printf("cleanup: update failed for stale running %s: %v", r.RunnerID, err)
+			log.Printf("cleanup: update failed for stale running %s: %v", r.ID, err)
 			result.Errors++
 			continue
 		}
@@ -229,14 +230,14 @@ func (c *Cleaner) sweepStaleRunning(ctx context.Context, records []*Record, cuto
 // outage would leave records stuck. Returns an error only on EC2
 // termination failure, which is the one case we cannot safely proceed
 // past (the instance may still be running).
-func (c *Cleaner) terminateAndDeregister(ctx context.Context, r *Record) error {
+func (c *Cleaner) terminateAndDeregister(ctx context.Context, r state.Runner) error {
 	if r.InstanceID != "" {
-		if err := c.Launcher.Terminate(ctx, r.InstanceID); err != nil {
+		if err := c.Launcher.Terminate(ctx, []string{r.InstanceID}); err != nil {
 			log.Printf("cleanup: terminate %s failed: %v", r.InstanceID, err)
 			return err
 		}
 	}
-	if r.GitHubRunnerID > 0 {
+	if r.GitHubRunnerID > 0 && c.GitHub != nil {
 		if err := c.GitHub.DeregisterRunner(ctx, r.Repository, r.GitHubRunnerID); err != nil {
 			log.Printf("cleanup: deregister runner %d for %s failed: %v",
 				r.GitHubRunnerID, r.Repository, err)

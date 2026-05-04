@@ -3,31 +3,49 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
 
+	funcframework "github.com/GoogleCloudPlatform/functions-framework-go/funcframework"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/sqs"
 
 	appconfig "github.com/devopsfactory-io/jit-runners/lambda/internal/config"
-	sqspub "github.com/devopsfactory-io/jit-runners/lambda/internal/sqs"
+	"github.com/devopsfactory-io/jit-runners/lambda/internal/provider"
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/webhook"
 )
 
 var (
-	cfgOnce     sync.Once
-	appCfg      *appconfig.Config
-	cfgErr      error
+	cfgOnce sync.Once
+	appCfg  *appconfig.Config
+	cfgErr  error
+
+	bundleOnce sync.Once
+	bundleRef  *provider.Bundle
+	bundleErr  error
+
 	handlerOnce sync.Once
 	wHandler    *webhook.Handler
 	handlerErr  error
 )
 
 func main() {
+	if os.Getenv("CLOUD_PROVIDER") == "gcp" {
+		funcframework.RegisterHTTPFunction("/", gcpHTTPHandler)
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "8080"
+		}
+		if err := funcframework.Start(port); err != nil {
+			log.Fatalf("funcframework.Start: %v", err)
+		}
+		return
+	}
 	lambda.Start(handler)
 }
 
@@ -62,6 +80,36 @@ func handler(ctx context.Context, req events.LambdaFunctionURLRequest) (events.L
 	return response(resp.Status, resp.Body), nil
 }
 
+// gcpHTTPHandler is the GCP Cloud Run entry point. Cloud Run delivers GitHub
+// webhook calls directly via HTTPS; we read the body and headers, then reuse
+// the same webhook.Handler.Handle path as the AWS branch.
+func gcpHTTPHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("gcpHTTPHandler: read body: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	sig := r.Header.Get("x-hub-signature-256")
+	eventType := r.Header.Get("x-github-event")
+
+	h, err := loadHandler(r.Context())
+	if err != nil {
+		log.Printf("gcpHTTPHandler: init handler: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	resp := h.Handle(r.Context(), eventType, sig, body)
+	w.WriteHeader(resp.Status)
+	if _, werr := w.Write([]byte(resp.Body)); werr != nil { //nolint:gosec // G705: resp.Body is a fixed literal from webhook.Handler.Handle, not user-controlled
+		log.Printf("gcpHTTPHandler: write response: %v", werr)
+	}
+}
+
 func loadConfig(ctx context.Context) (*appconfig.Config, error) {
 	cfgOnce.Do(func() {
 		appCfg, cfgErr = appconfig.Load(ctx)
@@ -70,38 +118,23 @@ func loadConfig(ctx context.Context) (*appconfig.Config, error) {
 }
 
 // loadHandler builds the webhook.Handler exactly once per Lambda container.
-// Both publishers are wired here:
-//
-//   - scale-up:  SQS_QUEUE_URL          -> internal/sqs.Publisher
-//   - lifecycle: LIFECYCLE_QUEUE_URL    -> internal/sqs.LifecyclePublisher
-//
-// LIFECYCLE_QUEUE_URL is required for the in_progress/completed dispatch path
-// added in Phase C; absent it, lifecycle requests will return 500 from the
-// handler. We surface the missing-env case as a config error here so the
-// Lambda fails fast on cold start when misconfigured.
+// Both publishers are obtained from the cloud-agnostic provider.Bundle so
+// that the same binary works with AWS (SQS) and GCP (Pub/Sub).
 func loadHandler(ctx context.Context) (*webhook.Handler, error) {
 	handlerOnce.Do(func() {
 		cfg, err := loadConfig(ctx)
 		if err != nil {
-			handlerErr = err
+			handlerErr = fmt.Errorf("load config: %w", err)
 			return
 		}
-		awsCfg, err := config.LoadDefaultConfig(ctx)
-		if err != nil {
-			handlerErr = err
+		bundleOnce.Do(func() {
+			bundleRef, bundleErr = provider.New(ctx, os.Getenv("CLOUD_PROVIDER"))
+		})
+		if bundleErr != nil {
+			handlerErr = fmt.Errorf("provider.New: %w", bundleErr)
 			return
 		}
-		client := sqs.NewFromConfig(awsCfg)
-		scaleUpPub := sqspub.NewPublisher(client, cfg.QueueURL)
-
-		lifecycleURL := os.Getenv("LIFECYCLE_QUEUE_URL")
-		if lifecycleURL == "" {
-			log.Printf("LIFECYCLE_QUEUE_URL is empty: lifecycle events will return 500 until set")
-			wHandler = webhook.NewHandler(scaleUpPub, nil, []byte(cfg.WebhookSecret))
-			return
-		}
-		lifecyclePub := sqspub.NewLifecyclePublisher(client, lifecycleURL)
-		wHandler = webhook.NewHandler(scaleUpPub, lifecyclePub, []byte(cfg.WebhookSecret))
+		wHandler = webhook.NewHandler(bundleRef.JobsPublisher, bundleRef.LifecyclePublisher, []byte(cfg.WebhookSecret))
 	})
 	return wHandler, handlerErr
 }
