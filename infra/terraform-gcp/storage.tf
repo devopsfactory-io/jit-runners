@@ -36,9 +36,13 @@ resource "google_storage_bucket" "functions" {
 # ----------------------------------------------------------------------------
 
 # 1. Fetch each zip from the GitHub Release as base64-encoded body.
+# GoReleaser publishes assets with the platform suffix `<func>-linux-amd64.zip`
+# (per .goreleaser.yml's name_template). The GCS bucket object stays at
+# `<func>.zip` (the local cache filename below) so Cloud Functions Gen 2 sees
+# stable source object names regardless of upstream archive naming.
 data "http" "function_zips" {
   for_each = toset(local.function_names)
-  url      = "https://github.com/devopsfactory-io/jit-runners/releases/download/${var.release_tag}/${each.key}.zip"
+  url      = "https://github.com/devopsfactory-io/jit-runners/releases/download/${var.release_tag}/${each.key}-linux-amd64.zip"
 }
 
 # 2. Land each base64-decoded body on local disk (Terraform-managed cache).
