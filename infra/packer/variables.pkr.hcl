@@ -98,8 +98,8 @@ variable "gcp_project" {
 
 variable "gcp_zone" {
   type        = string
-  default     = "us-central1-a"
-  description = "GCP zone for the Packer build instance. Storage locations are configured separately via gcp_image_storage_locations."
+  default     = "us-central1-c"
+  description = "GCP zone for the Packer build instance. Storage locations are configured separately via gcp_image_storage_locations. Changed from us-central1-a to us-central1-c due to recurring `does not have enough resources` capacity errors observed during the v1.0.0-rc.2 release (2026-05-04)."
 }
 
 variable "gcp_source_image_family" {
