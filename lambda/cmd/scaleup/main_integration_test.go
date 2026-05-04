@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"reflect"
 	"regexp"
 	"testing"
 	"time"
@@ -22,8 +23,10 @@ import (
 
 // fakeLauncher is a minimal compute.Launcher for tests.
 type fakeLauncher struct {
-	launchErr error
-	launches  []compute.LaunchSpec
+	launchErr    error
+	launches     []compute.LaunchSpec
+	terminateErr error
+	terminated   [][]string
 }
 
 func (f *fakeLauncher) Launch(_ context.Context, spec compute.LaunchSpec) (compute.Instance, error) {
@@ -34,10 +37,26 @@ func (f *fakeLauncher) Launch(_ context.Context, spec compute.LaunchSpec) (compu
 	return compute.Instance{ID: "i-test123"}, nil
 }
 
-func (f *fakeLauncher) Terminate(_ context.Context, _ []string) error { return nil }
+func (f *fakeLauncher) Terminate(_ context.Context, ids []string) error {
+	f.terminated = append(f.terminated, ids)
+	return f.terminateErr
+}
 
 func (f *fakeLauncher) ListStale(_ context.Context, _ time.Duration) ([]compute.Instance, error) {
 	return nil, nil
+}
+
+// errorOnUpdateStore wraps a real RunnerStore and forces Update to error.
+// Used to drive the post-Launch + Update-failure code path in T5.
+type errorOnUpdateStore struct {
+	state.RunnerStore
+	updateErr error
+	updates   []string // record IDs we tried to update
+}
+
+func (s *errorOnUpdateStore) Update(_ context.Context, id string, _ state.RunnerUpdate) error {
+	s.updates = append(s.updates, id)
+	return s.updateErr
 }
 
 // TestProcessRecord_ParseFailureIsNoOp verifies that malformed SQS bodies
@@ -221,5 +240,98 @@ func TestShouldLaunch(t *testing.T) {
 				t.Errorf("shouldLaunch = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestBindLaunchedInstance_TerminatesOnUpdateFailure pins the issue #74
+// design D1.3 contract for the post-Launch + Update-failure path: when
+// Compute.Launch has succeeded but State.Update fails, the helper must
+// (1) call Compute.Terminate with the launched instance ID so the EC2
+// is reclaimed instead of leaking as a no-DDB-row orphan, and (2) return
+// the wrapped Update error so SQS redrives. The next attempt launches a
+// fresh instance with a fresh DDB write.
+func TestBindLaunchedInstance_TerminatesOnUpdateFailure(t *testing.T) {
+	updateErr := errors.New("ddb throttled")
+	store := &errorOnUpdateStore{
+		RunnerStore: memstore.New(),
+		updateErr:   updateErr,
+	}
+	launcher := &fakeLauncher{}
+	b := &provider.Bundle{
+		State:   store,
+		Compute: launcher,
+	}
+
+	const recordID = "999"
+	const instanceID = "i-test123"
+
+	err := bindLaunchedInstance(context.Background(), b, recordID, instanceID, 999, 4567)
+
+	if err == nil {
+		t.Fatal("expected error from bindLaunchedInstance when Update fails")
+	}
+	if !errors.Is(err, updateErr) {
+		t.Errorf("err = %v, want wraps %v", err, updateErr)
+	}
+	if len(launcher.terminated) != 1 {
+		t.Fatalf("expected 1 Terminate call after Update failure, got %d",
+			len(launcher.terminated))
+	}
+	if got, want := launcher.terminated[0], []string{instanceID}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Terminate ids = %v, want %v", got, want)
+	}
+	if len(store.updates) != 1 || store.updates[0] != recordID {
+		t.Errorf("Update calls = %v, want [%q]", store.updates, recordID)
+	}
+}
+
+// TestBindLaunchedInstance_HappyPath verifies the no-error path is a
+// pass-through: no Terminate call, no error returned.
+func TestBindLaunchedInstance_HappyPath(t *testing.T) {
+	launcher := &fakeLauncher{}
+	b := &provider.Bundle{
+		State:   memstore.New(),
+		Compute: launcher,
+	}
+
+	// Seed a pending row so memstore.Update has something to mutate.
+	pending := runner.New("owner/repo", 999, "", 4567, 8910, []string{"self-hosted", "large"})
+	if err := b.State.Put(context.Background(), pending); err != nil {
+		t.Fatalf("seed Put: %v", err)
+	}
+
+	if err := bindLaunchedInstance(context.Background(), b, pending.ID, "i-test123", 999, 4567); err != nil {
+		t.Fatalf("bindLaunchedInstance happy path: %v", err)
+	}
+	if len(launcher.terminated) != 0 {
+		t.Errorf("happy path must not Terminate; got %d calls", len(launcher.terminated))
+	}
+}
+
+// TestBindLaunchedInstance_TerminateErrorStillReturnsUpdateError verifies
+// that even when the defensive Terminate also errors, bindLaunchedInstance
+// still returns the wrapped Update error (Terminate is best-effort and
+// surfaces only via log).
+func TestBindLaunchedInstance_TerminateErrorStillReturnsUpdateError(t *testing.T) {
+	updateErr := errors.New("ddb throttled")
+	store := &errorOnUpdateStore{
+		RunnerStore: memstore.New(),
+		updateErr:   updateErr,
+	}
+	launcher := &fakeLauncher{terminateErr: errors.New("ec2 throttled")}
+	b := &provider.Bundle{
+		State:   store,
+		Compute: launcher,
+	}
+
+	err := bindLaunchedInstance(context.Background(), b, "999", "i-test123", 999, 4567)
+	if err == nil {
+		t.Fatal("expected error even when Terminate also fails")
+	}
+	if !errors.Is(err, updateErr) {
+		t.Errorf("err = %v, want wraps Update err %v (Terminate err must not shadow it)", err, updateErr)
+	}
+	if len(launcher.terminated) != 1 {
+		t.Errorf("expected Terminate to still be attempted; got %d calls", len(launcher.terminated))
 	}
 }

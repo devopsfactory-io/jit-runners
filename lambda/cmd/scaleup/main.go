@@ -200,21 +200,36 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, b *provider.Bundl
 	// Launch succeeded — bind the instance ID and bump LastAttemptAt on the
 	// pending record. The record stays in StatusPending; the runner agent
 	// on the instance will flip it to running via the lifecycle pipeline.
-	now := time.Now()
-	if err := b.State.Update(ctx, pending.ID, state.RunnerUpdate{
-		InstanceID:    &inst.ID,
-		LastAttemptAt: &now,
-	}); err != nil {
-		// The instance is launched and the runner is registered — log and
-		// continue so the message is ack'd. Scaledown will reconcile if
-		// anything goes wrong from here.
-		log.Printf("failed to update runner record with instance %s for runner=%d job=%d: %v",
-			inst.ID, jitCfg.Runner.ID, msg.JobID, err)
+	if err := bindLaunchedInstance(ctx, b, pending.ID, inst.ID, jitCfg.Runner.ID, msg.JobID); err != nil {
+		return err
 	}
 
 	log.Printf("launched instance %s for runner=%d job=%d (%s)",
 		inst.ID, jitCfg.Runner.ID, msg.JobID, msg.RepositoryFull)
 	return nil
+}
+
+// bindLaunchedInstance writes the freshly-launched instance ID onto the
+// pending DDB row. On Update failure it best-effort terminates the EC2
+// instance and returns the wrapped error so SQS redrives — the next
+// attempt launches a fresh instance with a fresh DDB write. Without the
+// defensive Terminate the row would have no InstanceID, leaving an
+// orphan that survives until MaxRunnerAgeMinutes (issue #74 design D1.3).
+func bindLaunchedInstance(ctx context.Context, b *provider.Bundle, recordID, instanceID string, ghRunnerID, jobID int64) error {
+	now := time.Now()
+	err := b.State.Update(ctx, recordID, state.RunnerUpdate{
+		InstanceID:    &instanceID,
+		LastAttemptAt: &now,
+	})
+	if err == nil {
+		return nil
+	}
+	log.Printf("scaleup: update record after launch failed; terminating orphan instance %s for runner=%d job=%d: %v",
+		instanceID, ghRunnerID, jobID, err)
+	if termErr := b.Compute.Terminate(ctx, []string{instanceID}); termErr != nil {
+		log.Printf("scaleup: terminate orphan instance %s failed: %v", instanceID, termErr)
+	}
+	return fmt.Errorf("update runner record after launch: %w", err)
 }
 
 // writePendingRecord persists pending as the pre-launch state. Always a
