@@ -77,7 +77,7 @@ func handler(ctx context.Context, ev events.SQSEvent) error {
 		return fmt.Errorf("github client: %w", err)
 	}
 
-	h := lifecycle.New(bundleRef.State, ghClient, log.Default())
+	h := lifecycle.New(bundleRef.State, ghClient, bundleRef.Compute, log.Default())
 
 	for _, rec := range ev.Records {
 		if err := h.HandleSQS(ctx, []byte(rec.Body)); err != nil {
@@ -113,7 +113,7 @@ func gcpHandler(ctx context.Context, e cloudevents.Event) error {
 		return fmt.Errorf("decode cloudevent: %w", err)
 	}
 
-	h := lifecycle.New(bundleRef.State, ghClient, log.Default())
+	h := lifecycle.New(bundleRef.State, ghClient, bundleRef.Compute, log.Default())
 	return h.HandleSQS(ctx, body)
 }
 
