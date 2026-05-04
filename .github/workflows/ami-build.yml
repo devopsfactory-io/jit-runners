@@ -102,7 +102,8 @@ jobs:
           NODE_MAJOR="${{ inputs.node_major_version || '22' }}"
           JIT_VERSION="${{ steps.version.outputs.version }}"
 
-          ARGS="-var runner_version=${RUNNER_VERSION}"
+          ARGS="-only=amazon-ebs.jit-runner"
+          ARGS="${ARGS} -var runner_version=${RUNNER_VERSION}"
           ARGS="${ARGS} -var go_version=${GO_VERSION}"
           ARGS="${ARGS} -var node_major_version=${NODE_MAJOR}"
           ARGS="${ARGS} -var jit_runners_version=${JIT_VERSION}"
