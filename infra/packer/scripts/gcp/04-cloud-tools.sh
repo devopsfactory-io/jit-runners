@@ -34,13 +34,14 @@ sudo chmod +x /usr/local/bin/kubectl
 echo "=== jit-runners: installing Helm ==="
 HELM_VERSION="v3.17.3"
 HELM_ARCH="linux-amd64"
-curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-${HELM_ARCH}.tar.gz" \
-  -o /tmp/helm.tar.gz
-curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-${HELM_ARCH}.tar.gz.sha256sum" \
-  -o /tmp/helm.tar.gz.sha256
-(cd /tmp && sha256sum --check helm.tar.gz.sha256)
-tar -xzf /tmp/helm.tar.gz -C /tmp
+HELM_TAR="helm-${HELM_VERSION}-${HELM_ARCH}.tar.gz"
+# Download with the upstream filename so the sha256sum sidecar's relative
+# filename column resolves correctly under cd /tmp.
+curl -fsSL "https://get.helm.sh/${HELM_TAR}" -o "/tmp/${HELM_TAR}"
+curl -fsSL "https://get.helm.sh/${HELM_TAR}.sha256sum" -o "/tmp/${HELM_TAR}.sha256sum"
+(cd /tmp && sha256sum --check "${HELM_TAR}.sha256sum")
+tar -xzf "/tmp/${HELM_TAR}" -C /tmp
 sudo install -m 0755 "/tmp/${HELM_ARCH}/helm" /usr/local/bin/helm
-rm -rf /tmp/helm.tar.gz /tmp/helm.tar.gz.sha256 "/tmp/${HELM_ARCH}"
+rm -rf "/tmp/${HELM_TAR}" "/tmp/${HELM_TAR}.sha256sum" "/tmp/${HELM_ARCH}"
 
 echo "=== jit-runners: cloud tools installed ==="
