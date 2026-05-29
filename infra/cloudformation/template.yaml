@@ -59,6 +59,15 @@ Parameters:
     Default: t3.large
     Description: Default EC2 instance type for runners when no LabelMappings entry matches.
 
+  RunnerVersion:
+    Type: String
+    Default: 2.334.0
+    Description: >-
+      GitHub Actions runner version the ephemeral runners register with. Keep
+      current — GitHub deprecates old versions and refuses to dispatch jobs to
+      them. If it differs from the pre-baked AMI's version, the runner is
+      downloaded at launch (adds cold-start latency); rebuild the AMI to match.
+
   LabelMappings:
     Type: String
     Default: "[]"
@@ -399,6 +408,7 @@ Resources:
           EC2_DEFAULT_AMI: !Ref DefaultAMI
           DEFAULT_INSTANCE_TYPE: !Ref DefaultInstanceType
           LABEL_MAPPINGS: !Ref LabelMappings
+          RUNNER_VERSION: !Ref RunnerVersion
 
   ScaleUpLogGroup:
     Type: AWS::Logs::LogGroup

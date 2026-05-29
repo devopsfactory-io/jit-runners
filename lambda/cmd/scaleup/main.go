@@ -26,7 +26,14 @@ import (
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/webhook"
 )
 
-const defaultRunnerVersion = "2.332.0"
+// defaultRunnerVersion is the GitHub Actions runner version used when the
+// RUNNER_VERSION env var is unset. Keep it current: GitHub periodically
+// deprecates older runner versions and refuses to dispatch jobs to them
+// ("Runner version vX is deprecated and cannot receive messages"), which
+// leaves the ephemeral runner offline and the job stuck queued. Prefer
+// overriding via the RUNNER_VERSION env var (RunnerVersion CFN parameter) so
+// a deprecation can be addressed with a parameter-only deploy.
+const defaultRunnerVersion = "2.334.0"
 
 // queueLister abstracts the listing call for testability. Production code
 // passes *github.Client which satisfies this interface.
