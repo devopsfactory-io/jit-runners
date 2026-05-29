@@ -1,6 +1,6 @@
 variable "runner_version" {
   type        = string
-  default     = "2.332.0"
+  default     = "2.334.0"
   description = "GitHub Actions runner version to pre-install."
 }
 

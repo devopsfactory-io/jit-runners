@@ -64,6 +64,7 @@ resource "aws_lambda_function" "scaleup" {
       EC2_DEFAULT_AMI                   = var.default_ami
       DEFAULT_INSTANCE_TYPE             = var.default_instance_type
       LABEL_MAPPINGS                    = var.label_mappings
+      RUNNER_VERSION                    = var.runner_version
     }
   }
 

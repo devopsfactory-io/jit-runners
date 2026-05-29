@@ -63,6 +63,12 @@ variable "label_mappings" {
   default     = "[]"
 }
 
+variable "runner_version" {
+  description = "GitHub Actions runner version the ephemeral runners register with. Keep current — GitHub deprecates old versions and refuses to dispatch jobs to them. If it differs from the pre-baked AMI's version, the runner is downloaded at launch (adds cold-start latency); rebuild the AMI to match."
+  type        = string
+  default     = "2.334.0"
+}
+
 # --- Lambda ---
 
 variable "webhook_lambda_s3_bucket" {

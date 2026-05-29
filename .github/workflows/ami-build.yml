@@ -5,7 +5,7 @@ on:
     inputs:
       runner_version:
         description: "GitHub Actions runner version"
-        default: "2.332.0"
+        default: "2.334.0"
         required: true
       go_version:
         description: "Go version to pre-install"
