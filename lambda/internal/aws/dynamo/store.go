@@ -51,8 +51,13 @@ func NewStore(client API, tableName string) *Store {
 // use omitempty so legacy records that pre-date #47 round-trip without
 // emitting zero-valued attributes.
 type dbRecord struct {
-	RunnerID          string   `dynamodbav:"runner_id"`
-	InstanceID        string   `dynamodbav:"instance_id"`
+	RunnerID string `dynamodbav:"runner_id"`
+	// InstanceID is the key of the instance_id-index GSI. It uses omitempty so
+	// pending records (written before the EC2 instance exists, so InstanceID is
+	// empty) are not added to the GSI — DynamoDB rejects an empty-string value
+	// for a GSI key attribute. The instance ID is set later via Update once the
+	// instance launches, at which point the record joins the sparse index.
+	InstanceID        string   `dynamodbav:"instance_id,omitempty"`
 	JobID             int64    `dynamodbav:"job_id,omitempty"`
 	RunID             int64    `dynamodbav:"run_id,omitempty"`
 	Repository        string   `dynamodbav:"repository"`

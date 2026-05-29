@@ -357,6 +357,7 @@ Resources:
                   - dynamodb:PutItem
                   - dynamodb:GetItem
                   - dynamodb:UpdateItem
+                  - dynamodb:Scan
                 Resource: !GetAtt RunnersTable.Arn
               - Effect: Allow
                 Action:
@@ -436,7 +437,12 @@ Resources:
                 Action:
                   - dynamodb:Scan
                   - dynamodb:UpdateItem
-                Resource: !GetAtt RunnersTable.Arn
+                  # Query is used by the orphan sweep (GetByInstanceID) against
+                  # the instance_id-index GSI, which requires the index ARN.
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt RunnersTable.Arn
+                  - !Sub "${RunnersTable.Arn}/index/*"
               - Effect: Allow
                 Action:
                   - ec2:DescribeInstances
