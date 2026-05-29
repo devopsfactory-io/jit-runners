@@ -124,6 +124,41 @@ func TestStore_Put_PreservesAttributeNames(t *testing.T) {
 	}
 }
 
+func TestStore_Put_OmitsEmptyInstanceID(t *testing.T) {
+	// A pending runner is written before its EC2 instance exists, so
+	// InstanceID is empty. Because instance_id is the key of the
+	// instance_id-index GSI, DynamoDB rejects an empty-string value for it.
+	// The attribute must be omitted entirely so the record stays out of the
+	// sparse GSI until Update sets a real instance ID.
+	mock := &mockDDB{}
+	s := NewStore(mock, "runners")
+
+	now := time.Now()
+	r := state.Runner{
+		ID:         "org/repo#123",
+		InstanceID: "",
+		Repository: "org/repo",
+		Labels:     []string{"self-hosted", "medium"},
+		Status:     "pending",
+		LaunchedAt: now,
+		UpdatedAt:  now,
+		TTL:        now.Add(24 * time.Hour),
+	}
+	if err := s.Put(context.Background(), r); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if mock.putInput == nil {
+		t.Fatal("PutItem was not called")
+	}
+	if _, ok := mock.putInput.Item["instance_id"]; ok {
+		t.Error("instance_id attribute must be omitted when empty (GSI key cannot be an empty string)")
+	}
+	// The table key must still be present.
+	if _, ok := mock.putInput.Item["runner_id"]; !ok {
+		t.Error("missing attribute \"runner_id\" in PutItem")
+	}
+}
+
 func TestStore_Get_RoundTrip(t *testing.T) {
 	now := time.Now().Truncate(time.Second).UTC()
 	rec := dbRecord{

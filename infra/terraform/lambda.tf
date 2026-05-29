@@ -293,8 +293,14 @@ resource "aws_iam_role_policy" "scaledown_lambda" {
         Action = [
           "dynamodb:Scan",
           "dynamodb:UpdateItem",
+          # Query is used by the orphan sweep (GetByInstanceID) against the
+          # instance_id-index GSI, which requires permission on the index ARN.
+          "dynamodb:Query",
         ]
-        Resource = aws_dynamodb_table.runners.arn
+        Resource = [
+          aws_dynamodb_table.runners.arn,
+          "${aws_dynamodb_table.runners.arn}/index/*",
+        ]
       },
       {
         Effect = "Allow"
