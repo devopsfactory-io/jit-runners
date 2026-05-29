@@ -226,6 +226,7 @@ resource "aws_iam_role_policy" "scaleup_lambda" {
           "dynamodb:PutItem",
           "dynamodb:GetItem",
           "dynamodb:UpdateItem",
+          "dynamodb:Scan",
         ]
         Resource = aws_dynamodb_table.runners.arn
       },
