@@ -43,6 +43,16 @@ resource "aws_security_group" "runner" {
     description = "DNS"
   }
 
+  # Allow outbound PostgreSQL to the Supabase session pooler (port 5432) so
+  # deploy workflows can apply DB migrations from the runner.
+  egress {
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "PostgreSQL session pooler (Supabase) for DB migrations in deploy workflows"
+  }
+
   # No ingress rules - runners don't need inbound traffic.
 
   tags = {
