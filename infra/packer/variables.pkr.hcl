@@ -16,22 +16,11 @@ variable "ami_regions" {
   description = "Additional regions to copy the AMI to. Each copy is also made public."
 }
 
-# All supported distribution regions (US, Europe, South America)
-# Use: -var 'ami_regions=var.ami_distribution_regions' or pass explicitly
+# Public AMIs are distributed to us-east-1 only (plus the us-east-2 source); see #83.
 variable "ami_distribution_regions" {
-  type = list(string)
-  default = [
-    "us-east-1",
-    "us-west-1",
-    "us-west-2",
-    "eu-west-1",
-    "eu-west-2",
-    "eu-west-3",
-    "eu-central-1",
-    "eu-north-1",
-    "sa-east-1",
-  ]
-  description = "Pre-defined list of distribution regions (US, Europe, South America)."
+  type        = list(string)
+  default     = ["us-east-1"]
+  description = "Distribution regions for the public AMI (us-east-2 is the source region)."
 }
 
 variable "instance_type" {
