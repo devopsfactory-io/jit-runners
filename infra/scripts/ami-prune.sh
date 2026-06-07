@@ -127,8 +127,18 @@ prune_region() {
   done <<< "${to_delete}"
 }
 
-effective_quota() {  # added in Task 5; placeholder echoes default for now
-  echo "${QUOTA:-5}"
+# effective_quota <region> -> the Public AMIs quota: --quota override, else Service Quotas, else 5
+effective_quota() {
+  local region="$1"
+  if [ -n "${QUOTA}" ]; then echo "${QUOTA}"; return 0; fi
+  local v
+  if v="$(aws service-quotas get-service-quota --service-code ec2 --quota-code "${QUOTA_CODE}" \
+        --region "${region}" --query 'Quota.Value' --output text 2>/dev/null)" && [ -n "${v}" ] && [ "${v}" != "None" ]; then
+    printf '%.0f\n' "${v}"   # 5.0 -> 5
+  else
+    log "WARN: Service Quotas lookup failed in ${region}; defaulting Public AMIs quota to 5"
+    echo 5
+  fi
 }
 
 IFS=',' read -ra RLIST <<< "${REGIONS}"
