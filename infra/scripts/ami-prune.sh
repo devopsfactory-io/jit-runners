@@ -5,7 +5,6 @@ set -euo pipefail
 
 REGIONS=""; KEEP_LATEST=2; KEEP_AMI=""; STACK_NAME=""; NAME_PREFIX="jit-runner"
 ENSURE_FREE=""; QUOTA=""; APPLY=0
-# shellcheck disable=SC2034  # used in Task 5's effective_quota Service Quotas lookup
 QUOTA_CODE="L-0E3CBAB9"   # EC2 "Public AMIs" service quota
 
 usage() { sed -n '2,4p' "$0"; echo "Usage: $0 --regions r1,r2 [--keep-latest N] [--keep-ami a,b] [--stack-name S] [--name-prefix P] [--ensure-free K] [--quota Q] [--apply]"; }
@@ -87,6 +86,8 @@ prune_region() {
   local to_delete="${candidates}"
   if [ -n "${ENSURE_FREE}" ]; then
     local q; q="$(effective_quota "${region}")"
+    # NOTE: counts only our jit-runner* public AMIs; assumes no unrelated public AMIs
+    # share this region's Public-AMIs quota (true for the dedicated build account).
     local count; count="$(echo "${ids}" | grep -c 'ami-' || true)"
     local max_allowed=$(( q - ENSURE_FREE ))
     local need=$(( count - max_allowed ))

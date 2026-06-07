@@ -16,13 +16,6 @@ variable "ami_regions" {
   description = "Additional regions to copy the AMI to. Each copy is also made public."
 }
 
-# Public AMIs are distributed to us-east-1 only (plus the us-east-2 source); see #83.
-variable "ami_distribution_regions" {
-  type        = list(string)
-  default     = ["us-east-1"]
-  description = "Distribution regions for the public AMI (us-east-2 is the source region)."
-}
-
 variable "instance_type" {
   type        = string
   default     = "t3.medium"

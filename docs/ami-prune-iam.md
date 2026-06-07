@@ -13,7 +13,6 @@ the following statement to that role. The role already has the Packer + copy per
   "Action": [
     "ec2:DeregisterImage",
     "ec2:DeleteSnapshot",
-    "ec2:DescribeSnapshots",
     "cloudformation:DescribeStacks",
     "servicequotas:GetServiceQuota"
   ],
@@ -32,7 +31,7 @@ requires it.
 ROLE_NAME=<the build role name>
 aws iam simulate-principal-policy \
   --policy-source-arn "arn:aws:iam::767000629676:role/${ROLE_NAME}" \
-  --action-names ec2:DeregisterImage ec2:DeleteSnapshot ec2:DescribeSnapshots \
+  --action-names ec2:DeregisterImage ec2:DeleteSnapshot \
                  cloudformation:DescribeStacks servicequotas:GetServiceQuota \
   --query 'EvaluationResults[].{Action:EvalActionName,Decision:EvalDecision}' --output table
 ```
