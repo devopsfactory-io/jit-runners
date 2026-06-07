@@ -1,6 +1,6 @@
 module github.com/devopsfactory-io/jit-runners/lambda
 
-go 1.26.3
+go 1.26.4
 
 require (
 	cloud.google.com/go/compute v1.61.0
