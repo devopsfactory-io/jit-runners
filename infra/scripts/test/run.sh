@@ -21,16 +21,16 @@ setup() {
 }
 teardown() { rm -rf "${WORK}"; }
 
-# shellcheck disable=SC2329  # invoked indirectly by sourced test cases
+# shellcheck disable=SC2317,SC2329  # invoked indirectly by sourced test cases
 pass() { echo "ok   - $1"; }
-# shellcheck disable=SC2329  # invoked indirectly by sourced test cases
+# shellcheck disable=SC2317,SC2329  # invoked indirectly by sourced test cases
 fail() { echo "FAIL - $1"; FAILED=1; }
 
 # assert_no_call <needle>  -> fails if needle appears in calls log
-# shellcheck disable=SC2329  # invoked indirectly by sourced test cases
+# shellcheck disable=SC2317,SC2329  # invoked indirectly by sourced test cases
 assert_no_call() { if grep -q -- "$1" "${FAKE_AWS_CALLS}"; then fail "$2 (unexpected call: $1)"; else pass "$2"; fi; }
 # assert_call <needle>     -> fails if needle absent from calls log
-# shellcheck disable=SC2329  # invoked indirectly by sourced test cases
+# shellcheck disable=SC2317,SC2329  # invoked indirectly by sourced test cases
 assert_call() { if grep -q -- "$1" "${FAKE_AWS_CALLS}"; then pass "$2"; else fail "$2 (missing call: $1)"; fi; }
 
 # Source test files (added by later tasks)
