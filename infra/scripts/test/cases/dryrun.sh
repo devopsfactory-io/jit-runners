@@ -1,3 +1,5 @@
+# shellcheck shell=bash
+# Sourced by run.sh; pass/fail/assert_* are defined there.
 test_dryrun_keeps_top2_and_makes_no_mutations() {
   out="$("${SCRIPT}" --regions us-east-2 --keep-latest 2 2>&1)"
   # would delete the 3 oldest (ami-live, ami-old1, ami-old2), keep newest 2

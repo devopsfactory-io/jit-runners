@@ -26,7 +26,19 @@ while [ $# -gt 0 ]; do
 done
 [ -n "${REGIONS}" ] || { echo "--regions is required" >&2; exit 2; }
 
+# Validate numeric args (empty ensure-free/quota are allowed — they're optional).
+is_uint() { [[ "$1" =~ ^[0-9]+$ ]]; }
+is_uint "${KEEP_LATEST}" || { echo "--keep-latest must be a non-negative integer" >&2; exit 2; }
+if [ -n "${ENSURE_FREE}" ]; then
+  is_uint "${ENSURE_FREE}" || { echo "--ensure-free must be a non-negative integer" >&2; exit 2; }
+fi
+if [ -n "${QUOTA}" ]; then
+  is_uint "${QUOTA}" || { echo "--quota must be a non-negative integer" >&2; exit 2; }
+fi
+
 ERRORS=0
+ERRFILE="$(mktemp)"
+trap 'rm -f "${ERRFILE}"' EXIT
 log() { echo "[ami-prune] $*"; }
 
 # resolve_stack_ami <region> -> echoes the stack DefaultAMI id, or empty
@@ -56,8 +68,11 @@ prune_region() {
   # ids in newest-first order (the projected array lists Id before its Snaps per object)
   local ids; ids="$(echo "${images}" | grep -oE 'ami-[a-z0-9]+' | awk '!seen[$0]++')"
 
-  # Build keep-set: newest-N + --keep-ami + stack DefaultAMI (filter blanks)
-  local keep; keep="$(echo "${ids}" | head -n "${KEEP_LATEST}")"
+  # Build keep-set: newest-N + --keep-ami + stack DefaultAMI (filter blanks).
+  # KEEP_LATEST=0 is the one-time-purge path: empty newest-N without `head -n 0`
+  # (BSD/macOS head treats 0 as "all lines").
+  local keep=""
+  if [ "${KEEP_LATEST}" -gt 0 ]; then keep="$(echo "${ids}" | head -n "${KEEP_LATEST}")"; fi
   if [ -n "${KEEP_AMI}" ]; then keep="${keep}"$'\n'"$(echo "${KEEP_AMI}" | tr ',' '\n')"; fi
   local stack_ami; stack_ami="$(resolve_stack_ami "${region}")"
   [ -n "${stack_ami}" ] && keep="${keep}"$'\n'"${stack_ami}"
@@ -80,7 +95,8 @@ prune_region() {
       return 0
     fi
     to_delete="$(echo "${candidates}" | head -n "${need}")"
-    log "${region}: at/near quota (${count}/${q}); freeing ${need} slot(s)"
+    local freed; freed="$(echo "${to_delete}" | grep -c 'ami-' || true)"
+    log "${region}: at/near quota (${count}/${q}); freeing ${freed} slot(s)"
   fi
 
   [ -z "${to_delete}" ] && { log "${region}: nothing to prune"; return 0; }
@@ -88,7 +104,7 @@ prune_region() {
   local ami
   while IFS= read -r ami; do
     [ -z "${ami}" ] && continue
-    local snaps; snaps="$(echo "${images}" | python3 -c "import sys,json;d=json.load(sys.stdin);print('\n'.join(s for o in d if o['Id']=='${ami}' for s in (o.get('Snaps') or [])))" 2>/dev/null || true)"
+    local snaps; snaps="$(echo "${images}" | python3 -c "import sys,json;d=json.load(sys.stdin);a=sys.argv[1];print('\n'.join(s for o in d if o['Id']==a for s in (o.get('Snaps') or [])))" "${ami}" 2>/dev/null || true)"
     if [ "${APPLY}" -eq 1 ]; then
       log "${region}: deregistering ${ami}"
       if ! aws ec2 deregister-image --image-id "${ami}" --region "${region}"; then
@@ -97,8 +113,8 @@ prune_region() {
       local s
       for s in ${snaps}; do
         log "${region}: deleting ${s}"
-        if ! aws ec2 delete-snapshot --snapshot-id "${s}" --region "${region}" 2>/tmp/ami-prune.err; then
-          if grep -q "InvalidSnapshot.InUse" /tmp/ami-prune.err; then
+        if ! aws ec2 delete-snapshot --snapshot-id "${s}" --region "${region}" 2>"${ERRFILE}"; then
+          if grep -q "InvalidSnapshot.InUse" "${ERRFILE}"; then
             log "WARN: ${s} still in use by a retained AMI; skipping"
           else
             log "ERROR: delete ${s} failed"; ERRORS=1
