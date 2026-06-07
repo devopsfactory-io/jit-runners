@@ -19,7 +19,7 @@ setup() {
   export FAKE_QUOTA="5.0"
   export FAKE_SNAPSHOT_INUSE="0"
 }
-teardown() { rm -rf "${WORK}"; }
+teardown() { [ -n "${WORK:-}" ] && rm -rf "${WORK}"; }
 
 # shellcheck disable=SC2317,SC2329  # invoked indirectly by sourced test cases
 pass() { echo "ok   - $1"; }

@@ -184,9 +184,12 @@ jobs:
           echo "Disabling block public access in ${TARGET}..."
           aws ec2 disable-image-block-public-access --region "${TARGET}" || true
           echo "Copying ${AMI_ID} (${AMI_NAME}) to ${TARGET}..."
-          NEW_AMI=$(aws ec2 copy-image --source-region us-east-2 --source-image-id "${AMI_ID}" \
+          if ! NEW_AMI=$(aws ec2 copy-image --source-region us-east-2 --source-image-id "${AMI_ID}" \
             --region "${TARGET}" --name "${AMI_NAME}" --description "jit-runner pre-baked AMI" \
-            --query 'ImageId' --output text)
+            --query 'ImageId' --output text); then
+            echo "::warning::copy-image to ${TARGET} failed; source us-east-2 AMI remains usable."
+            exit 0
+          fi
           echo "  -> ${NEW_AMI}; waiting for available..."
           if ! aws ec2 wait image-available --image-ids "${NEW_AMI}" --region "${TARGET}"; then
             echo "::warning::Copy ${NEW_AMI} did not become available; source us-east-2 AMI remains usable."
@@ -234,6 +237,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # v6
         with:

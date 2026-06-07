@@ -105,7 +105,7 @@ prune_region() {
   local ami
   while IFS= read -r ami; do
     [ -z "${ami}" ] && continue
-    local snaps; snaps="$(echo "${images}" | python3 -c "import sys,json;d=json.load(sys.stdin);a=sys.argv[1];print('\n'.join(s for o in d if o['Id']==a for s in (o.get('Snaps') or [])))" "${ami}" 2>/dev/null || true)"
+    local snaps; snaps="$(echo "${images}" | python3 -c "import sys,json;d=json.load(sys.stdin);a=sys.argv[1];print('\n'.join(s for o in d if o['Id']==a for s in (o.get('Snaps') or []) if s))" "${ami}" 2>/dev/null || true)"
     if [ "${APPLY}" -eq 1 ]; then
       log "${region}: deregistering ${ami}"
       if ! aws ec2 deregister-image --image-id "${ami}" --region "${region}"; then

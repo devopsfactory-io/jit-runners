@@ -156,8 +156,8 @@ make check               # All checks (lint + vet + test)
 make ami.validate
 make ami.build                                # public AMI in us-east-2 (version from git)
 make ami.build-test                           # private test AMI in us-east-2
-make ami.build-distribute                     # public AMI + copy to all distribution regions (US, EU, SA)
-make ami.copy AMI_ID=ami-xxx                  # copy an existing AMI to all distribution regions
+make ami.build-distribute                     # public AMI in us-east-2 + copy to us-east-1
+make ami.copy AMI_ID=ami-xxx                  # copy an existing us-east-2 AMI to us-east-1
 
 # GCP — Pre-baked GCE image build (Packer, googlecompute source — same template, parallel scripts)
 make image.validate

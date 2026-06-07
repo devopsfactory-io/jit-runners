@@ -100,15 +100,15 @@ make ami.build-test
 
 Builds a private (non-public) AMI in `us-east-2` — sets `ami_groups=[]` so it is not published to the Community AMI catalog. Useful for validating Packer changes locally before merging. Also passes `JIT_RUNNERS_VERSION` automatically from git.
 
-### Build and distribute to all regions
+### Build and distribute to us-east-1
 
 ```bash
 make ami.build-distribute
 ```
 
-Builds in `us-east-2` and copies to: `us-east-1`, `us-west-1`, `us-west-2`, `eu-west-1`, `eu-west-2`, `eu-west-3`, `eu-central-1`, `eu-north-1`, `sa-east-1`.
+Builds in `us-east-2` (source) and copies the public AMI to `us-east-1` — the only two regions in the distribution set (#83).
 
-### Copy an existing AMI to all regions
+### Copy an existing AMI to us-east-1
 
 If you already have an AMI and want to distribute it without rebuilding:
 
@@ -257,12 +257,12 @@ The GitHub Actions workflow (`.github/workflows/ami-build.yml`) builds AMIs auto
 
 ## Multi-region cost
 
-Each additional region incurs:
+Each additional distribution region incurs:
 
 - **One-time**: ~$0.06-0.08 cross-region data transfer per region (~3-4 GB AMI)
 - **Monthly**: ~$0.15-0.20/month EBS snapshot storage per region
 
-With all 9 distribution regions: ~$0.60 one-time + ~$1.50-1.80/month.
+With the single distribution region (`us-east-1`, plus the `us-east-2` source): ~$0.06-0.08 one-time + ~$0.15-0.20/month — down from ~$0.60 + ~$1.50-1.80/month under the former 9-region model (#83).
 
 ## Public AMI retention & deprecation policy
 
