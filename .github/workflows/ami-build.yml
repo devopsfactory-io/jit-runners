@@ -93,6 +93,16 @@ jobs:
           echo "Disabling block public access in us-east-2 (source)..."
           aws ec2 disable-image-block-public-access --region us-east-2 || true
 
+      - name: Pre-build free-slot guard (us-east-2)
+        if: github.event_name != 'pull_request'
+        run: |
+          ./infra/scripts/ami-prune.sh \
+            --regions us-east-2 \
+            --stack-name jit-runners \
+            --keep-latest 2 \
+            --ensure-free 1 \
+            --apply
+
       - name: Packer build
         working-directory: infra/packer
         run: |
@@ -214,3 +224,22 @@ jobs:
           done
 
           echo "PR test AMI cleaned up."
+
+  prune:
+    needs: build
+    if: success() && github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # v6
+        with:
+          role-to-assume: ${{ secrets.AMI_BUILD_ROLE_ARN }}
+          aws-region: us-east-2
+      - name: Prune stale public AMIs (keep latest 2 + live DefaultAMI)
+        run: |
+          ./infra/scripts/ami-prune.sh --regions us-east-2 --stack-name jit-runners --keep-latest 2 --apply
+          ./infra/scripts/ami-prune.sh --regions us-east-1 --keep-latest 2 --apply
