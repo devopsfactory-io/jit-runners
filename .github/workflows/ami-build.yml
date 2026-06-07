@@ -37,9 +37,13 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: ami-build
+  cancel-in-progress: false
+
 env:
-  AMI_DISTRIBUTION_REGIONS: >-
-    us-east-1,us-west-1,us-west-2,eu-west-1,eu-west-2,eu-west-3,eu-central-1,eu-north-1,sa-east-1
+  # Public AMIs are published in the us-east-2 source region + us-east-1 only (cost; #83).
+  AMI_DISTRIBUTION_REGIONS: us-east-1
 
 jobs:
   build:
@@ -83,16 +87,11 @@ jobs:
         working-directory: infra/packer
         run: packer validate -only=amazon-ebs.jit-runner -var "runner_version=${{ inputs.runner_version || '2.332.0' }}" .
 
-      - name: Disable block public access for AMIs
-        if: github.event_name != 'pull_request' && (inputs.distribute == true || inputs.distribute == '')
+      - name: Disable block public access in source region
+        if: github.event_name != 'pull_request'
         run: |
-          echo "Disabling block public access in source region..."
+          echo "Disabling block public access in us-east-2 (source)..."
           aws ec2 disable-image-block-public-access --region us-east-2 || true
-          IFS=',' read -ra REGIONS <<< "${{ env.AMI_DISTRIBUTION_REGIONS }}"
-          for region in "${REGIONS[@]}"; do
-            echo "Disabling block public access in ${region}..."
-            aws ec2 disable-image-block-public-access --region "${region}" || true
-          done
 
       - name: Packer build
         working-directory: infra/packer
@@ -112,12 +111,9 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             ARGS="${ARGS} -var ami_groups=[]"
             ARGS="${ARGS} -var ami_name_prefix=jit-runner-pr"
-          else
-            DISTRIBUTE="${{ inputs.distribute || 'true' }}"
-            if [ "${DISTRIBUTE}" = "true" ]; then
-              ARGS="${ARGS} -var ami_regions=[\"us-east-1\",\"us-west-1\",\"us-west-2\",\"eu-west-1\",\"eu-west-2\",\"eu-west-3\",\"eu-central-1\",\"eu-north-1\",\"sa-east-1\"]"
-            fi
           fi
+          # Distribution to us-east-1 is handled by an explicit post-build step (publish-before-copy, #49);
+          # Packer builds + publishes the us-east-2 source only (ami_regions defaults to []).
 
           if [ -n "${{ inputs.extra_script }}" ]; then
             ARGS="${ARGS} -var extra_script=${{ inputs.extra_script }}"
@@ -158,13 +154,40 @@ jobs:
           else
             DISTRIBUTE="${{ inputs.distribute || 'true' }}"
             if [ "${DISTRIBUTE}" = "true" ]; then
-              echo "| Distributed To | us-east-1, us-west-1, us-west-2, eu-west-1, eu-west-2, eu-west-3, eu-central-1, eu-north-1, sa-east-1 |" >> "$GITHUB_STEP_SUMMARY"
+              echo "| Distributed To | us-east-1 |" >> "$GITHUB_STEP_SUMMARY"
             else
               echo "| Distributed To | _(none — source region only)_ |" >> "$GITHUB_STEP_SUMMARY"
             fi
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "Use this AMI as \`DefaultAMI\` in CloudFormation or \`default_ami\` in Terraform." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Distribute source AMI to us-east-1
+        if: github.event_name != 'pull_request' && (inputs.distribute == true || inputs.distribute == '')
+        working-directory: infra/packer
+        run: |
+          set -euo pipefail
+          AMI_ID=$(jq -r '.builds[-1].artifact_id' manifest.json | cut -d: -f2)
+          AMI_NAME=$(aws ec2 describe-images --image-ids "${AMI_ID}" --region us-east-2 \
+            --query 'Images[0].Name' --output text)
+          TARGET=us-east-1
+          echo "Disabling block public access in ${TARGET}..."
+          aws ec2 disable-image-block-public-access --region "${TARGET}" || true
+          echo "Copying ${AMI_ID} (${AMI_NAME}) to ${TARGET}..."
+          NEW_AMI=$(aws ec2 copy-image --source-region us-east-2 --source-image-id "${AMI_ID}" \
+            --region "${TARGET}" --name "${AMI_NAME}" --description "jit-runner pre-baked AMI" \
+            --query 'ImageId' --output text)
+          echo "  -> ${NEW_AMI}; waiting for available..."
+          if ! aws ec2 wait image-available --image-ids "${NEW_AMI}" --region "${TARGET}"; then
+            echo "::warning::Copy ${NEW_AMI} did not become available; source us-east-2 AMI remains usable."
+            exit 0
+          fi
+          if ! aws ec2 modify-image-attribute --image-id "${NEW_AMI}" --region "${TARGET}" \
+               --launch-permission "Add=[{Group=all}]"; then
+            echo "::warning::Failed to publish ${NEW_AMI} in ${TARGET}; source us-east-2 AMI remains usable."
+            exit 0
+          fi
+          echo "Published ${NEW_AMI} in ${TARGET}."
 
       - name: Cleanup PR test AMI
         if: always() && github.event_name == 'pull_request'
