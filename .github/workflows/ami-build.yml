@@ -172,6 +172,18 @@ jobs:
             echo "Use this AMI as \`DefaultAMI\` in CloudFormation or \`default_ami\` in Terraform." >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Pre-distribute free-slot guard (us-east-1)
+        if: github.event_name != 'pull_request' && (inputs.distribute == true || inputs.distribute == '')
+        run: |
+          # Free a public-AMI slot in us-east-1 BEFORE the copy, so the publish below
+          # cannot hit the 5-public-AMI quota (the post-build prune only runs afterward).
+          # No-op unless us-east-1 is at/near the ceiling; never drops the 2 newest. (#86)
+          ./infra/scripts/ami-prune.sh \
+            --regions us-east-1 \
+            --keep-latest 2 \
+            --ensure-free 1 \
+            --apply
+
       - name: Distribute source AMI to us-east-1
         if: github.event_name != 'pull_request' && (inputs.distribute == true || inputs.distribute == '')
         working-directory: infra/packer
