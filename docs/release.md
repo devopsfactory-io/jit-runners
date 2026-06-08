@@ -5,12 +5,14 @@ This document captures the manual procedure for releasing a new version of
 Lambda code. It mirrors the steps used for the v0.3.0 release.
 
 > **Scope:** stack `jit-runners` in account `767000629676`, region `us-east-2`,
-> bucket `jit-runners-lambda-s3`, four functions
-> (`jit-runners-{webhook,scaleup,scaledown,lifecycle}`).
+> bucket `jit-runners-lambda-s3`, five functions
+> (`jit-runners-{webhook,scaleup,scaledown,lifecycle,rebalancer}`).
 
 > **Out of scope:** GCP deployment (see `docs/getting-started-gcp.md` and the
-> "GCP path" section at the end of this file), the AWS Terraform path (see
-> `docs/getting-started-aws.md`), and the AMI build (see `infra/packer/`).
+> "GCP path" section at the end of this file) and the AWS Terraform path (see
+> `docs/getting-started-aws.md`). The AMI build itself is automated by
+> `ami-build.yml` (tag-triggered, see `infra/packer/`); this procedure now also
+> bumps the stack's `DefaultAMI` to the freshly built AMI (steps 2b + 5).
 
 ## Prerequisites
 
@@ -29,7 +31,7 @@ aws cloudformation describe-stacks \
   --stack-name jit-runners --region us-east-2 \
   --query 'Stacks[0].StackStatus'           # must be UPDATE_COMPLETE / CREATE_COMPLETE
 
-for fn in jit-runners-webhook jit-runners-scaleup jit-runners-scaledown jit-runners-lifecycle; do
+for fn in jit-runners-webhook jit-runners-scaleup jit-runners-scaledown jit-runners-lifecycle jit-runners-rebalancer; do
   aws lambda get-function --function-name "$fn" --region us-east-2 \
     --query 'Configuration.CodeSha256' --output text
 done
@@ -44,6 +46,22 @@ gh run watch --repo devopsfactory-io/jit-runners
 gh release view vX.Y.Z --repo devopsfactory-io/jit-runners
 ```
 
+## 2b. Capture the new AMI ID
+
+The same tag push triggers `ami-build.yml`, which bakes a new public AMI in
+`us-east-2` (and copies it to `us-east-1`). Wait for that run to finish, then
+capture the source-region AMI ID — this becomes the stack's new `DefaultAMI`:
+
+```bash
+NEW_AMI=$(aws ec2 describe-images --owners self --region us-east-2 \
+  --filters "Name=name,Values=jit-runner-vX.Y.Z*" "Name=is-public,Values=true" \
+  --query 'reverse(sort_by(Images,&CreationDate))[0].ImageId' --output text)
+echo "New AMI: ${NEW_AMI}"
+```
+
+If you are not rolling the runner image this release, skip this and leave
+`DefaultAMI` as `UsePreviousValue` in step 5.
+
 ## 3. Fetch and rename release assets
 
 GoReleaser names the zips `<fn>-linux-amd64.zip`, but the live stack expects
@@ -57,16 +75,17 @@ gh release download vX.Y.Z \
   --dir /tmp/jit-runners-vX.Y.Z
 
 cd /tmp/jit-runners-vX.Y.Z
-mv webhook-linux-amd64.zip   webhook.zip
-mv scaleup-linux-amd64.zip   scaleup.zip
-mv scaledown-linux-amd64.zip scaledown.zip
-mv lifecycle-linux-amd64.zip lifecycle.zip
+mv webhook-linux-amd64.zip    webhook.zip
+mv scaleup-linux-amd64.zip    scaleup.zip
+mv scaledown-linux-amd64.zip  scaledown.zip
+mv lifecycle-linux-amd64.zip  lifecycle.zip
+mv rebalancer-linux-amd64.zip rebalancer.zip
 ```
 
 ## 4. Upload to S3
 
 ```bash
-for f in webhook scaleup scaledown lifecycle; do
+for f in webhook scaleup scaledown lifecycle rebalancer; do
   aws s3 cp "/tmp/jit-runners-vX.Y.Z/${f}.zip" \
     "s3://jit-runners-lambda-s3/vX.Y.Z/${f}.zip"
 done
@@ -84,7 +103,11 @@ aws cloudformation update-stack \
     ParameterKey=ScaleUpLambdaS3Key,ParameterValue=vX.Y.Z/scaleup.zip \
     ParameterKey=ScaleDownLambdaS3Key,ParameterValue=vX.Y.Z/scaledown.zip \
     ParameterKey=LifecycleLambdaS3Key,ParameterValue=vX.Y.Z/lifecycle.zip \
-    ParameterKey=MaxReEnqueueAttempts,ParameterValue=3 \
+    ParameterKey=RebalancerLambdaS3Key,ParameterValue=vX.Y.Z/rebalancer.zip \
+    ParameterKey=DefaultAMI,ParameterValue=${NEW_AMI} \
+    ParameterKey=RunnerVersion,UsePreviousValue=true \
+    ParameterKey=DefaultInstanceType,UsePreviousValue=true \
+    ParameterKey=MaxReEnqueueAttempts,UsePreviousValue=true \
     ParameterKey=GitHubAppId,UsePreviousValue=true \
     ParameterKey=GitHubInstallationId,UsePreviousValue=true \
     ParameterKey=LambdaS3Bucket,UsePreviousValue=true \
@@ -92,7 +115,6 @@ aws cloudformation update-stack \
     ParameterKey=PrivateKeySecretArn,UsePreviousValue=true \
     ParameterKey=VpcId,UsePreviousValue=true \
     ParameterKey=SubnetIds,UsePreviousValue=true \
-    ParameterKey=DefaultAMI,UsePreviousValue=true \
     ParameterKey=LabelMappings,UsePreviousValue=true \
     ParameterKey=StaleThresholdMinutes,UsePreviousValue=true \
     ParameterKey=MaxRunnerAgeMinutes,UsePreviousValue=true
@@ -110,7 +132,7 @@ named-IAM resources.
 Each Lambda's `CodeSha256` must differ from the pre-flight capture:
 
 ```bash
-for fn in jit-runners-webhook jit-runners-scaleup jit-runners-scaledown jit-runners-lifecycle; do
+for fn in jit-runners-webhook jit-runners-scaleup jit-runners-scaledown jit-runners-lifecycle jit-runners-rebalancer; do
   aws lambda get-function --function-name "$fn" --region us-east-2 \
     --query 'Configuration.CodeSha256' --output text
 done
@@ -124,7 +146,9 @@ green CI run proves the new lambdas dispatch real runners.
 
 If anything misbehaves, re-run `update-stack` with the previous version's keys
 and let CloudFormation roll the Lambda code back. `vPREV` is whatever the
-previous successful release was (currently `v0.2.0`).
+previous successful release was (currently `v1.0.0-rc.4`). To also roll the
+runner image back, set `ParameterKey=DefaultAMI,ParameterValue=<previous AMI>`
+instead of `UsePreviousValue=true`.
 
 ```bash
 aws cloudformation update-stack \
@@ -136,6 +160,9 @@ aws cloudformation update-stack \
     ParameterKey=ScaleUpLambdaS3Key,ParameterValue=vPREV/scaleup.zip \
     ParameterKey=ScaleDownLambdaS3Key,ParameterValue=vPREV/scaledown.zip \
     ParameterKey=LifecycleLambdaS3Key,ParameterValue=vPREV/lifecycle.zip \
+    ParameterKey=RebalancerLambdaS3Key,ParameterValue=vPREV/rebalancer.zip \
+    ParameterKey=RunnerVersion,UsePreviousValue=true \
+    ParameterKey=DefaultInstanceType,UsePreviousValue=true \
     ParameterKey=MaxReEnqueueAttempts,UsePreviousValue=true \
     ParameterKey=GitHubAppId,UsePreviousValue=true \
     ParameterKey=GitHubInstallationId,UsePreviousValue=true \
