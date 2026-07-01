@@ -95,7 +95,7 @@ The five serverless functions share code via `lambda/internal/`:
 
 jit-runners ships a pre-baked image with an ubuntu-latest-like toolchain pre-installed. Using the pre-baked image eliminates the per-job dependency installation step, reducing cold-start time.
 
-- **AWS**: Amazon Linux 2023-based AMI built with Packer (`infra/packer/jit-runner.pkr.hcl`, `amazon-ebs` source). Published publicly to the AWS Community AMI catalog with multi-region distribution.
+- **AWS**: Amazon Linux 2023-based AMI built with Packer (`infra/packer/jit-runner.pkr.hcl`, `amazon-ebs` source). Built as a **private** AMI in `us-east-2` only — this project is single-tenant, so public distribution was dropped to eliminate EBS-snapshot cost and Packer complexity.
 - **GCP**: Ubuntu 24.04 LTS-based GCE image built with the same Packer template (`googlecompute` source) and parallel provisioning scripts under `infra/packer/scripts/gcp/`. Published as a public image in the maintainer's personal GCP project; multi-region storage replication.
 
 The image installs system libraries, build tools, Docker + Compose v2 + Buildx, Python 3, Node.js LTS, Go, cloud CLIs (`aws` or `gcloud`), `kubectl`, Helm 3, `gh`, `jq`, `yq`, `git-lfs`, `yamllint`, plus a runner OS user with the GitHub Actions runner agent pre-downloaded.
@@ -107,8 +107,8 @@ At instance launch, the startup script checks for a pre-baked marker file. If th
 ```bash
 # AWS
 make ami.validate                          # Validate Packer template
-make ami.build                             # Build public AMI (multi-region distribute via separate command)
-make ami.build-test                        # Build private test AMI
+make ami.build                             # Build private AMI in us-east-2
+make ami.build-test                        # Build private test AMI (jit-runner-pr prefix)
 
 # GCP
 make image.validate                        # Validate Packer template (GCP source)
@@ -116,7 +116,7 @@ make image.build GCP_PROJECT=my-project    # Build public image (multi-region di
 make image.build-test GCP_PROJECT=my-project   # Build private test image
 ```
 
-CI workflows build the public images on tag push:
+CI workflows build images on tag push:
 
 - **AWS**: `.github/workflows/ami-build.yml` — OIDC auth via `AMI_BUILD_ROLE_ARN` repo secret.
 - **GCP**: `.github/workflows/gce-image-build.yml` — OIDC auth via `GCE_BUILD_WIF_PROVIDER` + `GCE_BUILD_SA_EMAIL` repo secrets.

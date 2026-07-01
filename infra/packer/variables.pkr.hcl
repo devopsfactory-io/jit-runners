@@ -13,7 +13,7 @@ variable "aws_region" {
 variable "ami_regions" {
   type        = list(string)
   default     = []
-  description = "Additional regions to copy the AMI to. Each copy is also made public."
+  description = "Additional regions to copy the AMI to. Default [] builds only in the source region."
 }
 
 variable "instance_type" {
@@ -60,8 +60,8 @@ variable "volume_size" {
 
 variable "ami_groups" {
   type        = list(string)
-  default     = ["all"]
-  description = "Launch permission groups. Use [\"all\"] for public, [] for private."
+  default     = []
+  description = "Launch permission groups. Default [] keeps the AMI private (single-tenant use). Set [\"all\"] only to publish a community AMI."
 }
 
 variable "jit_runners_version" {
