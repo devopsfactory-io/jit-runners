@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Prune self-owned public jit-runner AMIs: keep newest-N (+ safe-list + live DefaultAMI),
+# Prune self-owned jit-runner AMIs: keep newest-N (+ safe-list + live DefaultAMI),
 # deregister the rest and delete their snapshots. Dry-run by default.
+# AMIs are private (single-tenant). The --ensure-free/--quota options are legacy
+# public-AMI-quota helpers, no longer used by CI; --keep-latest is the live path.
 set -euo pipefail
 
 REGIONS=""; KEEP_LATEST=2; KEEP_AMI=""; STACK_NAME=""; NAME_PREFIX="jit-runner"
@@ -57,11 +59,13 @@ resolve_stack_ami() {
 
 prune_region() {
   local region="$1"
-  # Newest-first list of self-owned public AMIs matching the name prefix.
+  # Newest-first list of self-owned AMIs matching the name prefix.
+  # Exclude jit-runner-pr* test AMIs: they are created and torn down within a
+  # single ami-build PR run, and must never count toward release retention.
   local images
   images="$(aws ec2 describe-images --region "${region}" --owners self \
-    --filters "Name=is-public,Values=true" "Name=name,Values=${NAME_PREFIX}*" \
-    --query "reverse(sort_by(Images,&CreationDate))[].{Id:ImageId,Snaps:BlockDeviceMappings[].Ebs.SnapshotId}" \
+    --filters "Name=name,Values=${NAME_PREFIX}*" \
+    --query "reverse(sort_by(Images[?!starts_with(Name, 'jit-runner-pr')],&CreationDate))[].{Id:ImageId,Snaps:BlockDeviceMappings[].Ebs.SnapshotId}" \
     --output json)"
 
   # ids in newest-first order (the projected array lists Id before its Snaps per object)

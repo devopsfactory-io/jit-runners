@@ -74,7 +74,7 @@ Edit `terraform.tfvars` with your values:
 - `rebalancer_lambda_s3_key` — S3 key for `rebalancer.zip`.
 - `vpc_id` — VPC ID where runner EC2 instances will launch.
 - `subnet_ids` — List of subnet IDs (private subnets recommended).
-- `default_ami` — AMI ID for runner instances (Amazon Linux 2023; use the public pre-baked AMI from `ami-build.yml` or build your own with `make ami.build-test`).
+- `default_ami` — AMI ID for runner instances (Amazon Linux 2023; build a private AMI with `make ami.build` or `make ami.build-test`, then use that ID).
 
 Optional:
 - `label_mappings` — JSON array mapping workflow labels to instance types (default: `[]`, which uses `t3.medium`).
@@ -150,11 +150,7 @@ aws cloudformation deploy \
 
 `--capabilities CAPABILITY_NAMED_IAM` is required because the template creates named IAM roles, including the `AWSServiceRoleForEC2Spot` service-linked role. This role is required for EC2 to launch spot instances.
 
-**AMI region**: The `DefaultAMI` must exist in the **same AWS region** where you are deploying the stack. If you are using a pre-baked community AMI published from a different region, copy it first:
-
-```bash
-make ami.copy AMI_ID=ami-0123456789abcdef0
-```
+**AMI region**: The `DefaultAMI` must exist in the **same AWS region** where you are deploying the stack. The pre-baked AMI is built in `us-east-2` (Packer's `var.aws_region`); to deploy in a different region, build there by running Packer with `-var aws_region=<region>` (or copy the AMI into that region), or use a stock Amazon Linux 2023 AMI.
 
 #### Optional parameters
 
@@ -260,18 +256,18 @@ For the canonical step-by-step rollout used in production, see [release.md](rele
 
 ## Pre-baked AMI
 
-jit-runners ships a public pre-baked Amazon Linux 2023 AMI with an ubuntu-latest-like toolchain pre-installed. Reduces cold-start time vs. a stock AMI.
+jit-runners ships a pre-baked Amazon Linux 2023 AMI with an ubuntu-latest-like toolchain pre-installed. It is **private** and built in `us-east-2` only — the project is single-tenant, so public distribution was dropped to eliminate EBS-snapshot cost and Packer complexity.
 
-To build your own private AMI:
+To build a private AMI (production builds and CI tag pushes):
+
+```bash
+make ami.build
+```
+
+To build a private test AMI with the `jit-runner-pr` prefix (for local Packer validation):
 
 ```bash
 make ami.build-test
-```
-
-To build and publish a multi-region AMI (maintainers only — requires `AMI_BUILD_ROLE_ARN` OIDC role):
-
-```bash
-make ami.build-distribute
 ```
 
 See [ami-prebaked.md](ami-prebaked.md) for the full Packer pipeline reference.
