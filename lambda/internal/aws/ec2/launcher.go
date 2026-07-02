@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"log"
 	"strings"
 	"time"
 
@@ -38,6 +39,7 @@ type LauncherOptions struct {
 	SecurityGroupID    string
 	IAMInstanceProfile string
 	SpotMaxPrice       string // empty = on-demand price cap
+	CpuCredits         string // "standard" pins burstable (t-family) launches; "" = AWS default (unlimited)
 	ExtraTags          map[string]string
 }
 
@@ -87,6 +89,7 @@ func (l *Launcher) Launch(ctx context.Context, spec compute.LaunchSpec) (compute
 			lastErr = err
 		}
 	}
+	log.Printf("event=spot_exhausted_ondemand_fallback runner=%s attempted_types=%d", spec.RunnerID, len(spec.InstanceTypes))
 	id, err := l.runInstance(ctx, spec, spec.InstanceTypes[0], subnets[0], false)
 	if err != nil {
 		return compute.Instance{}, fmt.Errorf("spot and on-demand launch both failed (spot: %v): %w", lastErr, err)
@@ -131,6 +134,18 @@ func isFatal(err error) bool {
 		"InvalidParameterValue", "InvalidParameterCombination":
 		return true
 	}
+	// Allow-list is intentionally minimal and grows only as production logs
+	// reveal codes that also fail on-demand. Unknown ⇒ retryable (see doc above).
+	return false
+}
+
+// isBurstable reports whether instanceType is a t-family (burstable) type.
+func isBurstable(instanceType string) bool {
+	for _, p := range []string{"t2.", "t3.", "t3a.", "t4g."} {
+		if strings.HasPrefix(instanceType, p) {
+			return true
+		}
+	}
 	return false
 }
 
@@ -161,6 +176,11 @@ func (l *Launcher) runInstance(ctx context.Context, spec compute.LaunchSpec, ins
 		TagSpecifications: []types.TagSpecification{
 			{ResourceType: types.ResourceTypeInstance, Tags: tags},
 		},
+	}
+	if l.opts.CpuCredits != "" && isBurstable(instanceType) {
+		input.CreditSpecification = &types.CreditSpecificationRequest{
+			CpuCredits: aws.String(l.opts.CpuCredits),
+		}
 	}
 	if spot {
 		input.InstanceMarketOptions = &types.InstanceMarketOptionsRequest{

@@ -158,3 +158,35 @@ func TestLaunch_NoInstanceTypesErrors(t *testing.T) {
 		t.Errorf("calls = %d, want 0 (should not attempt any launch)", len(f.calls))
 	}
 }
+
+type creditCapture struct {
+	fakeEC2
+	last *types.CreditSpecificationRequest
+}
+
+func (c *creditCapture) RunInstances(ctx context.Context, in *awsec2.RunInstancesInput, o ...func(*awsec2.Options)) (*awsec2.RunInstancesOutput, error) {
+	c.last = in.CreditSpecification
+	return c.fakeEC2.RunInstances(ctx, in, o...)
+}
+
+func TestRunInstance_BurstableGetsStandardCredits(t *testing.T) {
+	c := &creditCapture{}
+	l := NewLauncher(c, LauncherOptions{CpuCredits: "standard"})
+	if _, err := l.Launch(context.Background(), spec([]string{"t3.medium"}, []string{"sn-a"})); err != nil {
+		t.Fatal(err)
+	}
+	if c.last == nil || aws.ToString(c.last.CpuCredits) != "standard" {
+		t.Errorf("CreditSpecification = %+v, want CpuCredits=standard", c.last)
+	}
+}
+
+func TestRunInstance_NonBurstableNoCredits(t *testing.T) {
+	c := &creditCapture{}
+	l := NewLauncher(c, LauncherOptions{CpuCredits: "standard"})
+	if _, err := l.Launch(context.Background(), spec([]string{"c5.xlarge"}, []string{"sn-a"})); err != nil {
+		t.Fatal(err)
+	}
+	if c.last != nil {
+		t.Errorf("CreditSpecification = %+v, want nil for non-burstable", c.last)
+	}
+}
