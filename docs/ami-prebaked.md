@@ -28,7 +28,7 @@ PR test builds use the prefix `jit-runner-pr` and are private. They are automati
 
 jit-runners AMIs are **private** and built in **us-east-2 only**. This is intentional: the project is single-tenant (used only by the devopsfactory-io org), so publishing public "community AMIs" and maintaining a second distribution region added EBS-snapshot cost and Packer complexity for zero benefit. The `ami_groups` Packer variable defaults to `[]` (private); the previous `["all"]` default was removed.
 
-If you need to use the AMI from another AWS account, build your own private AMI in the target account — see "Building your own AMI" below. Cross-account AMI sharing is possible by specifying account IDs in `ami_groups` via the Packer `-var` flag, but that is not done in CI.
+If you need to use the AMI from another AWS account, build your own private AMI in the target account — see "Building your own AMI" below. Cross-account sharing is also possible by granting launch permission to specific account IDs (via `aws ec2 modify-image-attribute --launch-permission`, i.e. Packer's `ami_users`), but that is not done in CI. `ami_groups` only accepts `["all"]` (public) and is not for per-account sharing.
 
 ### Find the AMI (self-account only)
 

@@ -60,10 +60,12 @@ resolve_stack_ami() {
 prune_region() {
   local region="$1"
   # Newest-first list of self-owned AMIs matching the name prefix.
+  # Exclude jit-runner-pr* test AMIs: they are created and torn down within a
+  # single ami-build PR run, and must never count toward release retention.
   local images
   images="$(aws ec2 describe-images --region "${region}" --owners self \
     --filters "Name=name,Values=${NAME_PREFIX}*" \
-    --query "reverse(sort_by(Images,&CreationDate))[].{Id:ImageId,Snaps:BlockDeviceMappings[].Ebs.SnapshotId}" \
+    --query "reverse(sort_by(Images[?!starts_with(Name, 'jit-runner-pr')],&CreationDate))[].{Id:ImageId,Snaps:BlockDeviceMappings[].Ebs.SnapshotId}" \
     --output json)"
 
   # ids in newest-first order (the projected array lists Id before its Snaps per object)

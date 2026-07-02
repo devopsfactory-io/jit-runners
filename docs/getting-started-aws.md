@@ -150,7 +150,7 @@ aws cloudformation deploy \
 
 `--capabilities CAPABILITY_NAMED_IAM` is required because the template creates named IAM roles, including the `AWSServiceRoleForEC2Spot` service-linked role. This role is required for EC2 to launch spot instances.
 
-**AMI region**: The `DefaultAMI` must exist in the **same AWS region** where you are deploying the stack. The pre-baked AMI is built in `us-east-2`; if you deploy in a different region, build a private AMI there with `make ami.build` (after setting `AWS_DEFAULT_REGION` appropriately) or use a stock Amazon Linux 2023 AMI.
+**AMI region**: The `DefaultAMI` must exist in the **same AWS region** where you are deploying the stack. The pre-baked AMI is built in `us-east-2` (Packer's `var.aws_region`); to deploy in a different region, build there by running Packer with `-var aws_region=<region>` (or copy the AMI into that region), or use a stock Amazon Linux 2023 AMI.
 
 #### Optional parameters
 
