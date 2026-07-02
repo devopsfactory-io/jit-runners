@@ -79,6 +79,9 @@ func (l *Launcher) Launch(ctx context.Context, spec compute.LaunchSpec) (compute
 	var lastErr error
 	for _, it := range spec.InstanceTypes {
 		for _, sn := range subnets {
+			if err := ctx.Err(); err != nil {
+				return compute.Instance{}, fmt.Errorf("launch: context done during spot sweep: %w", err)
+			}
 			id, err := l.runInstance(ctx, spec, it, sn, true)
 			if err == nil {
 				return newInstance(id, spec), nil
@@ -89,7 +92,7 @@ func (l *Launcher) Launch(ctx context.Context, spec compute.LaunchSpec) (compute
 			lastErr = err
 		}
 	}
-	log.Printf("event=spot_exhausted_ondemand_fallback runner=%s attempted_types=%d", spec.RunnerID, len(spec.InstanceTypes))
+	log.Printf("event=spot_exhausted_ondemand_fallback runner=%s labels=%v attempted_types=%v", spec.RunnerID, spec.Labels, spec.InstanceTypes)
 	id, err := l.runInstance(ctx, spec, spec.InstanceTypes[0], subnets[0], false)
 	if err != nil {
 		return compute.Instance{}, fmt.Errorf("spot and on-demand launch both failed (spot: %v): %w", lastErr, err)

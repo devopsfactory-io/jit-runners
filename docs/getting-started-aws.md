@@ -157,7 +157,7 @@ aws cloudformation deploy \
 
 Add these to `--parameter-overrides` if needed:
 
-- `LabelMappings='[{"label":"large","instance_type":"c5.xlarge","instance_types":["c6i.xlarge","c5.xlarge","c5a.xlarge","m6i.xlarge"]},{"label":"release","instance_type":"m5.xlarge"}]'` — Map workflow labels to instance types. Each entry may include an optional `instance_types` list (ordered candidates for spot diversification); when present it supersedes `instance_type` for spot requests. A plain `instance_type` without `instance_types` continues to work unchanged.
+- `LabelMappings='[{"label":"large","instance_type":"c6i.xlarge","instance_types":["c6i.xlarge","c5.xlarge","c5a.xlarge","m6i.xlarge"]},{"label":"release","instance_type":"m5.xlarge"}]'` — Map workflow labels to instance types. Each entry may include an optional `instance_types` list (ordered candidates for spot diversification); when present it supersedes `instance_type` for spot requests. A plain `instance_type` without `instance_types` continues to work unchanged. Note: `--parameter-overrides` replaces the **entire** `LabelMappings` value, so any override must include every label class you want (see the full six-class default in the [Default `LabelMappings`](#default-labelmappings) table below) — the two-entry example above is illustrative, not additive.
 - `StaleThresholdMinutes=10` — Minutes before a pending runner is considered stale (default: 10).
 - `MaxRunnerAgeMinutes=360` — Maximum age before force-termination (default: 360).
 - `MaxReEnqueueAttempts=3` — Re-enqueue budget for stuck pending runners (default: 3).
@@ -172,7 +172,7 @@ Both the CloudFormation template and the Terraform module ship with the followin
 | micro | t2.micro | _(single type)_ |
 | small | t2.small | _(single type)_ |
 | medium | t3.medium | t3.medium, t3a.medium, m6i.large, m5.large |
-| large | c5.xlarge | c6i.xlarge, c5.xlarge, c5a.xlarge, m6i.xlarge |
+| large | c6i.xlarge | c6i.xlarge, c5.xlarge, c5a.xlarge, m6i.xlarge |
 | release | m5.xlarge | m5.xlarge, m5a.xlarge, m6i.xlarge, m6a.xlarge |
 
 The `release` label is intended for release workflows that benefit from spot diversification across stable, low-interruption families:

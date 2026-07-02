@@ -206,7 +206,7 @@ The scaleup Lambda tries each candidate instance type in the `instance_types` li
 ### Diagnosis
 
 ```bash
-# Count on-demand fallbacks in the last hour
+# List on-demand fallback events in the last hour
 aws logs filter-log-events \
   --log-group-name "/aws/lambda/jit-runners-scaleup" \
   --start-time "$(date -d '1 hour ago' +%s000 2>/dev/null || date -v-1H +%s000)" \
@@ -214,14 +214,14 @@ aws logs filter-log-events \
   --query 'events[].message'
 ```
 
-Each log line includes the label class and the list of candidates that were tried, which identifies which instance family is exhausted.
+Each log line includes the label class (`labels=`) and the list of candidate instance types that were tried (`attempted_types=`), which identifies which instance family is exhausted.
 
 ### Resolution
 
 Expand the `instance_types` candidate list for the affected label class to include additional families or sizes with historically better spot availability. For example, to add `m7i.xlarge` as a fallback for `large`:
 
 ```json
-{"label":"large","instance_type":"c5.xlarge","instance_types":["c6i.xlarge","c5.xlarge","c5a.xlarge","m6i.xlarge","m7i.xlarge"]}
+{"label":"large","instance_type":"c6i.xlarge","instance_types":["c6i.xlarge","c5.xlarge","c5a.xlarge","m6i.xlarge","m7i.xlarge"]}
 ```
 
 Update the `LabelMappings` parameter (CloudFormation) or `label_mappings` variable (Terraform) and redeploy. A plain `instance_type` without an `instance_types` list always goes directly to on-demand when spot is unavailable; adding an `instance_types` list enables diversified retries.

@@ -149,6 +149,19 @@ func TestLaunch_EmptySubnetsNoPanic(t *testing.T) {
 	}
 }
 
+func TestLaunch_ContextCanceledStopsSweep(t *testing.T) {
+	f := &fakeEC2{}
+	l := NewLauncher(f, LauncherOptions{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already done
+	if _, err := l.Launch(ctx, spec([]string{"c6i.xlarge", "c5.xlarge"}, []string{"sn-a", "sn-b"})); err == nil {
+		t.Fatal("want error for canceled context, got nil")
+	}
+	if len(f.calls) != 0 {
+		t.Errorf("calls = %d, want 0 (canceled ctx should stop before any spot attempt)", len(f.calls))
+	}
+}
+
 func TestLaunch_NoInstanceTypesErrors(t *testing.T) {
 	f := &fakeEC2{}
 	l := NewLauncher(f, LauncherOptions{})

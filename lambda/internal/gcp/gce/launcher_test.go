@@ -125,6 +125,44 @@ func TestLauncher_Launch_ReturnsInstance(t *testing.T) {
 	}
 }
 
+func TestLauncher_Launch_NoInstanceTypesErrors(t *testing.T) {
+	fake := &fakeGCE{insertReturnID: "jit-runner-abcdef12"}
+	launcher := newLauncherWithAPI(fake, defaultOpts())
+
+	spec := defaultSpec()
+	spec.InstanceTypes = nil
+
+	if _, err := launcher.Launch(context.Background(), spec); err == nil {
+		t.Fatal("want error for empty InstanceTypes, got nil")
+	}
+	if fake.insertCalled {
+		t.Error("Insert should not be called when InstanceTypes is empty")
+	}
+}
+
+func TestLauncher_Launch_EmptySubnetUsesOptsFallback(t *testing.T) {
+	fake := &fakeGCE{insertReturnID: "jit-runner-abcdef12"}
+	opts := defaultOpts()
+	launcher := newLauncherWithAPI(fake, opts)
+
+	spec := defaultSpec()
+	spec.SubnetIDs = nil
+
+	if _, err := launcher.Launch(context.Background(), spec); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !fake.insertCalled {
+		t.Fatal("expected Insert to be called")
+	}
+	nics := fake.insertReq.GetInstanceResource().GetNetworkInterfaces()
+	if len(nics) == 0 {
+		t.Fatal("no network interfaces in InsertInstanceRequest")
+	}
+	if got := nics[0].GetSubnetwork(); got != opts.Subnet {
+		t.Errorf("subnetwork = %q, want opts fallback %q", got, opts.Subnet)
+	}
+}
+
 func TestLauncher_Launch_PropagatesError(t *testing.T) {
 	insertErr := errors.New("quota exceeded")
 	fake := &fakeGCE{insertErr: insertErr}
