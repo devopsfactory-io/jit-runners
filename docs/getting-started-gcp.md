@@ -43,7 +43,7 @@ Optional:
 - `runner_network` — VPC network name or full path for runner VMs (default `"default"`). Set this if you're not using the project's default network.
 - `runner_zone` — GCE zone where runner VMs launch (default `"us-central1-a"`). Pin a different zone for capacity or spot pricing reasons.
 - `firestore_collection` — Firestore collection name for runner records (default `"runners"`).
-- `label_mappings` — JSON array of label-to-machine-type mappings (default `"[]"`).
+- `label_mappings` — JSON array of label-to-machine-type mappings (default `"[]"`, which uses `var.default_instance_type` for all labels). Each entry uses `instance_type` to specify the GCE machine type. The `instance_types` candidate list field (used for AWS spot diversification) is accepted in the JSON but GCP uses only the first entry — set `instance_type` explicitly instead.
 - `max_runner_age_minutes`, `stale_threshold_minutes`, `max_re_enqueue_attempts` — operational thresholds (defaults mirror AWS module).
 - `function_memory`, `function_timeout_seconds`, `max_instance_count` — Cloud Run scaling knobs.
 
