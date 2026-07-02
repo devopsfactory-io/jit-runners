@@ -164,8 +164,8 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, b *provider.Bundl
 		return err
 	}
 
-	// Resolve instance type from labels.
-	instanceType := resolveInstanceType(cfg, customLabels)
+	// Resolve instance types from labels.
+	instanceTypes := resolveInstanceTypes(cfg, customLabels)
 
 	// Generate user-data.
 	runnerVersion := os.Getenv("RUNNER_VERSION")
@@ -187,7 +187,7 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, b *provider.Bundl
 
 	spec := compute.LaunchSpec{
 		Labels:        msg.Labels,
-		InstanceTypes: []string{instanceType},
+		InstanceTypes: instanceTypes,
 		ImageID:       ami,
 		SubnetIDs:     cfg.SubnetIDs,
 		UserData:      userData,
@@ -270,15 +270,23 @@ func markLaunchFailed(ctx context.Context, gh *github.Client, store state.Runner
 	}
 }
 
-func resolveInstanceType(cfg *appconfig.Config, labels []string) string {
+// resolveInstanceTypes returns the ordered candidate instance-type list for the
+// given labels: a matched mapping's InstanceTypes if non-empty, else its single
+// InstanceType, else the DefaultInstanceType. Always returns ≥1 element.
+func resolveInstanceTypes(cfg *appconfig.Config, labels []string) []string {
 	for _, mapping := range cfg.LabelMappings {
 		for _, label := range labels {
 			if label == mapping.Label {
-				return mapping.InstanceType
+				if len(mapping.InstanceTypes) > 0 {
+					return mapping.InstanceTypes
+				}
+				if mapping.InstanceType != "" {
+					return []string{mapping.InstanceType}
+				}
 			}
 		}
 	}
-	return cfg.DefaultInstanceType
+	return []string{cfg.DefaultInstanceType}
 }
 
 func resolveAMI(cfg *appconfig.Config, labels []string) string {

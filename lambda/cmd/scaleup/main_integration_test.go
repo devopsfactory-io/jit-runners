@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"regexp"
+	"slices"
 	"testing"
 	"time"
 
@@ -333,5 +334,33 @@ func TestBindLaunchedInstance_TerminateErrorStillReturnsUpdateError(t *testing.T
 	}
 	if len(launcher.terminated) != 1 {
 		t.Errorf("expected Terminate to still be attempted; got %d calls", len(launcher.terminated))
+	}
+}
+
+func TestResolveInstanceTypes(t *testing.T) {
+	cfg := &appconfig.Config{
+		DefaultInstanceType: "t3.large",
+		LabelMappings: []appconfig.LabelMapping{
+			{Label: "large", InstanceType: "c5.xlarge",
+				InstanceTypes: []string{"c6i.xlarge", "c5.xlarge"}},
+			{Label: "medium", InstanceType: "t3.medium"},
+		},
+	}
+	cases := []struct {
+		name   string
+		labels []string
+		want   []string
+	}{
+		{"list wins", []string{"large"}, []string{"c6i.xlarge", "c5.xlarge"}},
+		{"single instance_type", []string{"medium"}, []string{"t3.medium"}},
+		{"no match falls to default", []string{"self-hosted"}, []string{"t3.large"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveInstanceTypes(cfg, tc.labels)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("resolveInstanceTypes(%v) = %v, want %v", tc.labels, got, tc.want)
+			}
+		})
 	}
 }
