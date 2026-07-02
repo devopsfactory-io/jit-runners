@@ -4,12 +4,16 @@ package ec2
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"hash/fnv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/smithy-go"
 
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/compute"
 )
@@ -53,26 +57,81 @@ func NewLauncher(client API, opts LauncherOptions) *Launcher {
 	return &Launcher{client: client, opts: opts}
 }
 
-// Launch starts an EC2 spot instance with the given spec, falling back to
-// on-demand if the spot request fails. Returns the resulting Instance.
+// Launch diversifies across the ordered candidate instance types and subnets,
+// requesting spot capacity first-success-wins. It aborts early only on a closed
+// allow-list of fatal request errors (isFatal); every other error — including
+// unknown API codes and transport errors — is treated as retryable so the loop
+// continues, preserving the "launch success ≥ today" guarantee. If no spot
+// attempt succeeds, it makes one on-demand last-resort attempt on the primary
+// candidate/subnet. Returns the resulting Instance.
 func (l *Launcher) Launch(ctx context.Context, spec compute.LaunchSpec) (compute.Instance, error) {
 	if len(spec.InstanceTypes) == 0 {
 		return compute.Instance{}, fmt.Errorf("launch: spec has no instance types")
 	}
-	it := spec.InstanceTypes[0]
-	subnet := ""
-	if len(spec.SubnetIDs) > 0 {
-		subnet = spec.SubnetIDs[0]
+	subnets := spec.SubnetIDs
+	if len(subnets) == 0 {
+		subnets = []string{""} // "" → EC2 picks a default-VPC subnet (today's behavior)
 	}
-	id, err := l.runInstance(ctx, spec, it, subnet, true)
-	if err != nil {
-		idOD, errOD := l.runInstance(ctx, spec, it, subnet, false)
-		if errOD != nil {
-			return compute.Instance{}, fmt.Errorf("spot and on-demand launch both failed (spot: %v): %w", err, errOD)
+	subnets = rotate(subnets, spec.RunnerID)
+
+	var lastErr error
+	for _, it := range spec.InstanceTypes {
+		for _, sn := range subnets {
+			id, err := l.runInstance(ctx, spec, it, sn, true)
+			if err == nil {
+				return newInstance(id, spec), nil
+			}
+			if isFatal(err) {
+				return compute.Instance{}, fmt.Errorf("launch aborted (fatal): %w", err)
+			}
+			lastErr = err
 		}
-		id = idOD
 	}
-	return compute.Instance{ID: id, State: "pending", LaunchedAt: time.Now().UTC(), RunnerID: spec.RunnerID}, nil
+	id, err := l.runInstance(ctx, spec, spec.InstanceTypes[0], subnets[0], false)
+	if err != nil {
+		return compute.Instance{}, fmt.Errorf("spot and on-demand launch both failed (spot: %v): %w", lastErr, err)
+	}
+	return newInstance(id, spec), nil
+}
+
+func newInstance(id string, spec compute.LaunchSpec) compute.Instance {
+	return compute.Instance{ID: id, State: "pending", LaunchedAt: time.Now().UTC(), RunnerID: spec.RunnerID}
+}
+
+// rotate offsets the subnet order deterministically by the runner ID so
+// concurrent launches spread across AZs instead of all starting at subnets[0].
+func rotate(subnets []string, seed string) []string {
+	if len(subnets) <= 1 {
+		return subnets
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(seed))
+	off := int(h.Sum32() % uint32(len(subnets)))
+	out := make([]string, 0, len(subnets))
+	out = append(out, subnets[off:]...)
+	out = append(out, subnets[:off]...)
+	return out
+}
+
+// isFatal reports whether err is a request-level error that would fail on
+// on-demand too — the only case where skipping the on-demand fallback is safe.
+// DEFAULT: unknown/non-API errors are retryable (return false), preserving the
+// "launch success ≥ today" guarantee.
+func isFatal(err error) bool {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	code := apiErr.ErrorCode()
+	if strings.HasPrefix(code, "InvalidAMIID") {
+		return true
+	}
+	switch code {
+	case "UnauthorizedOperation", "AuthFailure", "PendingVerification",
+		"InvalidParameterValue", "InvalidParameterCombination":
+		return true
+	}
+	return false
 }
 
 // runInstance issues a single RunInstances call. If spot is true, market
