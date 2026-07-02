@@ -78,12 +78,12 @@ func defaultOpts() LauncherOptions {
 
 func defaultSpec() compute.LaunchSpec {
 	return compute.LaunchSpec{
-		Labels:       []string{"large"},
-		InstanceType: "n2-standard-4",
-		ImageID:      "projects/ubuntu-os-cloud/global/images/ubuntu-2404-noble-amd64-v20240801",
-		SubnetID:     "projects/my-project/regions/us-central1/subnetworks/default",
-		UserData:     base64.StdEncoding.EncodeToString([]byte("#!/bin/bash\necho hello")),
-		RunnerID:     "42",
+		Labels:        []string{"large"},
+		InstanceTypes: []string{"n2-standard-4"},
+		ImageID:       "projects/ubuntu-os-cloud/global/images/ubuntu-2404-noble-amd64-v20240801",
+		SubnetIDs:     []string{"projects/my-project/regions/us-central1/subnetworks/default"},
+		UserData:      base64.StdEncoding.EncodeToString([]byte("#!/bin/bash\necho hello")),
+		RunnerID:      "42",
 	}
 }
 

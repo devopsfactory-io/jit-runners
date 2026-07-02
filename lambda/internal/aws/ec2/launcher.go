@@ -56,26 +56,28 @@ func NewLauncher(client API, opts LauncherOptions) *Launcher {
 // Launch starts an EC2 spot instance with the given spec, falling back to
 // on-demand if the spot request fails. Returns the resulting Instance.
 func (l *Launcher) Launch(ctx context.Context, spec compute.LaunchSpec) (compute.Instance, error) {
-	id, err := l.runInstance(ctx, spec, true)
+	if len(spec.InstanceTypes) == 0 {
+		return compute.Instance{}, fmt.Errorf("launch: spec has no instance types")
+	}
+	it := spec.InstanceTypes[0]
+	subnet := ""
+	if len(spec.SubnetIDs) > 0 {
+		subnet = spec.SubnetIDs[0]
+	}
+	id, err := l.runInstance(ctx, spec, it, subnet, true)
 	if err != nil {
-		// Spot launch failed; fall back to on-demand to preserve prior behavior.
-		idOD, errOD := l.runInstance(ctx, spec, false)
+		idOD, errOD := l.runInstance(ctx, spec, it, subnet, false)
 		if errOD != nil {
 			return compute.Instance{}, fmt.Errorf("spot and on-demand launch both failed (spot: %v): %w", err, errOD)
 		}
 		id = idOD
 	}
-	return compute.Instance{
-		ID:         id,
-		State:      "pending",
-		LaunchedAt: time.Now().UTC(),
-		RunnerID:   spec.RunnerID,
-	}, nil
+	return compute.Instance{ID: id, State: "pending", LaunchedAt: time.Now().UTC(), RunnerID: spec.RunnerID}, nil
 }
 
 // runInstance issues a single RunInstances call. If spot is true, market
 // options are configured for spot pricing; otherwise the request is on-demand.
-func (l *Launcher) runInstance(ctx context.Context, spec compute.LaunchSpec, spot bool) (string, error) {
+func (l *Launcher) runInstance(ctx context.Context, spec compute.LaunchSpec, instanceType, subnetID string, spot bool) (string, error) {
 	tags := make([]types.Tag, 0, len(l.opts.ExtraTags)+2)
 	tags = append(tags, types.Tag{
 		Key:   aws.String(tagManagedBy),
@@ -93,7 +95,7 @@ func (l *Launcher) runInstance(ctx context.Context, spec compute.LaunchSpec, spo
 
 	input := &ec2.RunInstancesInput{
 		ImageId:      aws.String(spec.ImageID),
-		InstanceType: types.InstanceType(spec.InstanceType),
+		InstanceType: types.InstanceType(instanceType),
 		MinCount:     aws.Int32(1),
 		MaxCount:     aws.Int32(1),
 		UserData:     aws.String(spec.UserData),
@@ -113,8 +115,8 @@ func (l *Launcher) runInstance(ctx context.Context, spec compute.LaunchSpec, spo
 		}
 	}
 
-	if spec.SubnetID != "" {
-		input.SubnetId = aws.String(spec.SubnetID)
+	if subnetID != "" {
+		input.SubnetId = aws.String(subnetID)
 	}
 	if l.opts.SecurityGroupID != "" {
 		input.SecurityGroupIds = []string{l.opts.SecurityGroupID}

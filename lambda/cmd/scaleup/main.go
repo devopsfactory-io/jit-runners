@@ -182,20 +182,16 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, b *provider.Bundl
 		return fmt.Errorf("generate user-data: %w", err)
 	}
 
-	// Resolve AMI and subnet.
+	// Resolve AMI.
 	ami := resolveAMI(cfg, customLabels)
-	subnetID := ""
-	if len(cfg.SubnetIDs) > 0 {
-		subnetID = cfg.SubnetIDs[0] // simple round-robin can be added later
-	}
 
 	spec := compute.LaunchSpec{
-		Labels:       msg.Labels,
-		InstanceType: instanceType,
-		ImageID:      ami,
-		SubnetID:     subnetID,
-		UserData:     userData,
-		RunnerID:     pending.ID,
+		Labels:        msg.Labels,
+		InstanceTypes: []string{instanceType},
+		ImageID:       ami,
+		SubnetIDs:     cfg.SubnetIDs,
+		UserData:      userData,
+		RunnerID:      pending.ID,
 	}
 
 	inst, err := b.Compute.Launch(ctx, spec)
