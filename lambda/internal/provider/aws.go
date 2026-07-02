@@ -52,7 +52,7 @@ func newAWS(ctx context.Context) (*Bundle, error) {
 	launcher := awsec2.NewLauncher(awsec2sdk.NewFromConfig(awsCfg), awsec2.LauncherOptions{
 		SecurityGroupID:    os.Getenv("EC2_SECURITY_GROUP_ID"),
 		IAMInstanceProfile: os.Getenv("EC2_IAM_INSTANCE_PROFILE"),
-		CpuCredits:         cpuCredits,
+		CPUCredits:         cpuCredits,
 	})
 
 	secLoader := awssecrets.New(awssm.NewFromConfig(awsCfg))

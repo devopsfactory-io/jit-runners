@@ -172,7 +172,7 @@ func (c *creditCapture) RunInstances(ctx context.Context, in *awsec2.RunInstance
 
 func TestRunInstance_BurstableGetsStandardCredits(t *testing.T) {
 	c := &creditCapture{}
-	l := NewLauncher(c, LauncherOptions{CpuCredits: "standard"})
+	l := NewLauncher(c, LauncherOptions{CPUCredits: "standard"})
 	if _, err := l.Launch(context.Background(), spec([]string{"t3.medium"}, []string{"sn-a"})); err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestRunInstance_BurstableGetsStandardCredits(t *testing.T) {
 
 func TestRunInstance_NonBurstableNoCredits(t *testing.T) {
 	c := &creditCapture{}
-	l := NewLauncher(c, LauncherOptions{CpuCredits: "standard"})
+	l := NewLauncher(c, LauncherOptions{CPUCredits: "standard"})
 	if _, err := l.Launch(context.Background(), spec([]string{"c5.xlarge"}, []string{"sn-a"})); err != nil {
 		t.Fatal(err)
 	}

@@ -39,7 +39,7 @@ type LauncherOptions struct {
 	SecurityGroupID    string
 	IAMInstanceProfile string
 	SpotMaxPrice       string // empty = on-demand price cap
-	CpuCredits         string // "standard" pins burstable (t-family) launches; "" = AWS default (unlimited)
+	CPUCredits         string // "standard" pins burstable (t-family) launches; "" = AWS default (unlimited)
 	ExtraTags          map[string]string
 }
 
@@ -183,9 +183,9 @@ func (l *Launcher) runInstance(ctx context.Context, spec compute.LaunchSpec, ins
 			{ResourceType: types.ResourceTypeInstance, Tags: tags},
 		},
 	}
-	if l.opts.CpuCredits != "" && isBurstable(instanceType) {
+	if l.opts.CPUCredits != "" && isBurstable(instanceType) {
 		input.CreditSpecification = &types.CreditSpecificationRequest{
-			CpuCredits: aws.String(l.opts.CpuCredits),
+			CpuCredits: aws.String(l.opts.CPUCredits),
 		}
 	}
 	if spot {
