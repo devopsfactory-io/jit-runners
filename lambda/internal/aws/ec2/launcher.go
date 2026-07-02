@@ -130,8 +130,14 @@ func isFatal(err error) bool {
 		return true
 	}
 	switch code {
-	case "UnauthorizedOperation", "AuthFailure", "PendingVerification",
-		"InvalidParameterValue", "InvalidParameterCombination":
+	case "UnauthorizedOperation", "AuthFailure", "PendingVerification":
+		return true
+	// NOTE: InvalidParameterValue/Combination are treated as fatal (they fail on
+	// on-demand too). This is safe only while spot-specific params are hardcoded
+	// valid constants. If SpotMaxPrice (currently unwired) is ever populated and
+	// misconfigured, it surfaces as InvalidParameterValue on the SPOT request only
+	// — revisit excluding these codes then, so a bad MaxPrice still falls back.
+	case "InvalidParameterValue", "InvalidParameterCombination":
 		return true
 	}
 	// Allow-list is intentionally minimal and grows only as production logs

@@ -84,6 +84,9 @@ func newLauncherWithAPI(api gceAPI, opts LauncherOptions) *Launcher {
 // It returns as soon as the insert request is accepted — it does NOT block on
 // the LRO, matching the AWS RunInstances fire-and-return pattern.
 func (l *Launcher) Launch(ctx context.Context, spec compute.LaunchSpec) (compute.Instance, error) {
+	if len(spec.InstanceTypes) == 0 {
+		return compute.Instance{}, fmt.Errorf("gcp/gce: launch: spec has no instance types")
+	}
 	// Decode the startup script from base64 so it can be set as metadata value.
 	scriptBytes, err := base64.StdEncoding.DecodeString(spec.UserData)
 	if err != nil {

@@ -3,6 +3,7 @@ package ec2
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -188,5 +189,43 @@ func TestRunInstance_NonBurstableNoCredits(t *testing.T) {
 	}
 	if c.last != nil {
 		t.Errorf("CreditSpecification = %+v, want nil for non-burstable", c.last)
+	}
+}
+
+func TestRotate(t *testing.T) {
+	subnets := []string{"a", "b", "c"}
+
+	// Deterministic: same seed → same order.
+	if got1, got2 := rotate(subnets, "r1"), rotate(subnets, "r1"); !slices.Equal(got1, got2) {
+		t.Errorf("rotate not deterministic: %v vs %v", got1, got2)
+	}
+
+	// Preserves length and is a permutation (all elements present).
+	got := rotate(subnets, "r1")
+	if len(got) != len(subnets) {
+		t.Fatalf("len = %d, want %d", len(got), len(subnets))
+	}
+	sorted := append([]string(nil), got...)
+	slices.Sort(sorted)
+	if !slices.Equal(sorted, []string{"a", "b", "c"}) {
+		t.Errorf("rotate dropped/added elements: %v", got)
+	}
+
+	// len<=1 passthrough (no panic, unchanged).
+	if got := rotate([]string{"only"}, "x"); !slices.Equal(got, []string{"only"}) {
+		t.Errorf("single-element rotate = %v, want [only]", got)
+	}
+	if got := rotate(nil, "x"); len(got) != 0 {
+		t.Errorf("nil rotate = %v, want empty", got)
+	}
+
+	// Spread: at least two different RunnerIDs produce different start offsets
+	// across a reasonable sample (probabilistic but near-certain for 3 subnets).
+	seen := map[string]bool{}
+	for _, s := range []string{"r1", "r2", "r3", "r4", "r5", "r6"} {
+		seen[rotate(subnets, s)[0]] = true
+	}
+	if len(seen) < 2 {
+		t.Errorf("rotate did not spread across subnets: only start %v seen", seen)
 	}
 }
