@@ -1,10 +1,10 @@
 RUNNER_VERSION ?= 2.332.0
 JIT_RUNNERS_VERSION ?= $(shell git describe --tags --always 2>/dev/null || echo "dev")
 
-AMI_DISTRIBUTION_REGIONS ?= us-east-1 us-west-1 us-west-2 eu-west-1 eu-west-2 eu-west-3 eu-central-1 eu-north-1 sa-east-1
+AMI_DISTRIBUTION_REGIONS ?= us-east-1
 SOURCE_REGION ?= us-east-2
 
-.PHONY: help test lint build clean lambda.build lambda.test ami.build ami.build-test ami.validate ami.build-distribute ami.copy image.build image.build-test image.validate image.build-distribute image.copy
+.PHONY: help test lint build clean lambda.build lambda.test ami.build ami.build-test ami.validate ami.build-distribute ami.copy ami.prune image.build image.build-test image.validate image.build-distribute image.copy
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_.-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-24s\033[0m %s\n", $$1, $$2}'
@@ -59,11 +59,11 @@ ami.build-test: ## Build a private (non-public) test AMI
 		-var "jit_runners_version=$(JIT_RUNNERS_VERSION)" \
 		-var 'ami_groups=[]' .
 
-ami.build-distribute: ## Build AMI and copy to all distribution regions
+ami.build-distribute: ## Build AMI and copy to the distribution region (us-east-1)
 	cd infra/packer && packer init . && packer build \
 		-var "runner_version=$(RUNNER_VERSION)" \
 		-var "jit_runners_version=$(JIT_RUNNERS_VERSION)" \
-		-var 'ami_regions=["us-east-1","us-west-1","us-west-2","eu-west-1","eu-west-2","eu-west-3","eu-central-1","eu-north-1","sa-east-1"]' .
+		-var 'ami_regions=["us-east-1"]' .
 
 ami.copy: ## Copy an existing AMI to all distribution regions (requires AMI_ID)
 	@if [ -z "$(AMI_ID)" ]; then echo "Usage: make ami.copy AMI_ID=ami-xxxxx"; exit 1; fi
@@ -87,6 +87,10 @@ ami.copy: ## Copy an existing AMI to all distribution regions (requires AMI_ID)
 		aws ec2 modify-image-attribute --image-id $${NEW_AMI} --region $${region} --launch-permission "Add=[{Group=all}]"; \
 	done
 	@echo "Done. AMI distributed to all regions."
+
+ami.prune: ## Dry-run prune of stale public AMIs (us-east-1,us-east-2). Add APPLY=1 to apply.
+	infra/scripts/ami-prune.sh --regions us-east-1,us-east-2 --stack-name jit-runners \
+		--keep-latest 2 $(if $(filter 1,$(APPLY)),--apply,)
 
 # ============================================================================
 # GCE image build (mirrors ami.* targets — D9)

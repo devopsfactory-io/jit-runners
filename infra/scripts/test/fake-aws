@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Fake AWS CLI for ami-prune tests. Records argv to $FAKE_AWS_CALLS and returns
+# canned output based on the subcommand. Controlled by env:
+#   FAKE_AWS_CALLS         path to append "service subcommand <args>" lines
+#   FAKE_DESCRIBE_IMAGES   path to a JSON fixture for `ec2 describe-images`
+#   FAKE_DEFAULT_AMI       value returned for `cloudformation describe-stacks` DefaultAMI
+#   FAKE_QUOTA             value returned for `service-quotas get-service-quota`
+#   FAKE_SNAPSHOT_INUSE    if "1", `ec2 delete-snapshot` exits non-zero with InvalidSnapshot.InUse
+set -euo pipefail
+
+echo "$*" >>"${FAKE_AWS_CALLS:-/dev/null}"
+
+service="${1:-}"; shift || true
+sub="${1:-}"; shift || true
+
+case "${service} ${sub}" in
+  "ec2 describe-images")
+    cat "${FAKE_DESCRIBE_IMAGES:?FAKE_DESCRIBE_IMAGES unset}"
+    ;;
+  "ec2 describe-snapshots")
+    echo '{"Snapshots":[]}'
+    ;;
+  "cloudformation describe-stacks")
+    # ami-prune queries DefaultAMI via --query; emit the raw value it expects (--output text)
+    echo "${FAKE_DEFAULT_AMI:-None}"
+    ;;
+  "service-quotas get-service-quota")
+    echo "${FAKE_QUOTA:-5.0}"
+    ;;
+  "ec2 deregister-image")
+    : # success, no output
+    ;;
+  "ec2 delete-snapshot")
+    if [ "${FAKE_SNAPSHOT_INUSE:-0}" = "1" ]; then
+      echo "An error occurred (InvalidSnapshot.InUse) when calling DeleteSnapshot" >&2
+      exit 254
+    fi
+    ;;
+  *)
+    echo "fake-aws: unhandled: ${service} ${sub} $*" >&2
+    exit 99
+    ;;
+esac

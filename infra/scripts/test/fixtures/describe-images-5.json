@@ -1,0 +1,7 @@
+[
+  {"Id": "ami-new1", "Snaps": ["snap-new1"]},
+  {"Id": "ami-new2", "Snaps": ["snap-new2"]},
+  {"Id": "ami-live", "Snaps": ["snap-live"]},
+  {"Id": "ami-old1", "Snaps": ["snap-old1"]},
+  {"Id": "ami-old2", "Snaps": ["snap-old2"]}
+]
