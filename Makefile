@@ -1,10 +1,7 @@
 RUNNER_VERSION ?= 2.332.0
 JIT_RUNNERS_VERSION ?= $(shell git describe --tags --always 2>/dev/null || echo "dev")
 
-AMI_DISTRIBUTION_REGIONS ?= us-east-1
-SOURCE_REGION ?= us-east-2
-
-.PHONY: help test lint build clean lambda.build lambda.test ami.build ami.build-test ami.validate ami.build-distribute ami.copy ami.prune image.build image.build-test image.validate image.build-distribute image.copy
+.PHONY: help test lint build clean lambda.build lambda.test ami.build ami.build-test ami.validate ami.prune image.build image.build-test image.validate image.build-distribute image.copy
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_.-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-24s\033[0m %s\n", $$1, $$2}'
@@ -48,48 +45,19 @@ check-fmt: ## Check Go formatting
 ami.validate: ## Validate Packer template (AWS source)
 	cd infra/packer && packer init . && packer validate -only=amazon-ebs.jit-runner .
 
-ami.build: ## Build pre-baked runner AMI with Packer
+ami.build: ## Build pre-baked private runner AMI with Packer (us-east-2 only)
 	cd infra/packer && packer init . && packer build \
 		-var "runner_version=$(RUNNER_VERSION)" \
 		-var "jit_runners_version=$(JIT_RUNNERS_VERSION)" .
 
-ami.build-test: ## Build a private (non-public) test AMI
+ami.build-test: ## Build a private test AMI with the jit-runner-pr prefix
 	cd infra/packer && packer init . && packer build \
 		-var "runner_version=$(RUNNER_VERSION)" \
 		-var "jit_runners_version=$(JIT_RUNNERS_VERSION)" \
-		-var 'ami_groups=[]' .
+		-var 'ami_name_prefix=jit-runner-pr' .
 
-ami.build-distribute: ## Build AMI and copy to the distribution region (us-east-1)
-	cd infra/packer && packer init . && packer build \
-		-var "runner_version=$(RUNNER_VERSION)" \
-		-var "jit_runners_version=$(JIT_RUNNERS_VERSION)" \
-		-var 'ami_regions=["us-east-1"]' .
-
-ami.copy: ## Copy an existing AMI to all distribution regions (requires AMI_ID)
-	@if [ -z "$(AMI_ID)" ]; then echo "Usage: make ami.copy AMI_ID=ami-xxxxx"; exit 1; fi
-	@echo "Disabling block public access for AMIs in target regions..."
-	@for region in $(AMI_DISTRIBUTION_REGIONS); do \
-		aws ec2 disable-image-block-public-access --region $${region} > /dev/null 2>&1 || true; \
-	done
-	@AMI_NAME=$$(aws ec2 describe-images --image-ids $(AMI_ID) --region $(SOURCE_REGION) --query 'Images[0].Name' --output text); \
-	for region in $(AMI_DISTRIBUTION_REGIONS); do \
-		echo "Copying $(AMI_ID) to $${region}..."; \
-		NEW_AMI=$$(aws ec2 copy-image \
-			--source-region $(SOURCE_REGION) \
-			--source-image-id $(AMI_ID) \
-			--region $${region} \
-			--name "$${AMI_NAME}" \
-			--description "jit-runner pre-baked AMI" \
-			--query 'ImageId' --output text); \
-		echo "  -> $${NEW_AMI} ($${region})"; \
-		echo "  Making public..."; \
-		aws ec2 wait image-available --image-ids $${NEW_AMI} --region $${region}; \
-		aws ec2 modify-image-attribute --image-id $${NEW_AMI} --region $${region} --launch-permission "Add=[{Group=all}]"; \
-	done
-	@echo "Done. AMI distributed to all regions."
-
-ami.prune: ## Dry-run prune of stale public AMIs (us-east-1,us-east-2). Add APPLY=1 to apply.
-	infra/scripts/ami-prune.sh --regions us-east-1,us-east-2 --stack-name jit-runners \
+ami.prune: ## Dry-run prune of stale private AMIs (us-east-2). Add APPLY=1 to apply.
+	infra/scripts/ami-prune.sh --regions us-east-2 --stack-name jit-runners \
 		--keep-latest 2 $(if $(filter 1,$(APPLY)),--apply,)
 
 # ============================================================================

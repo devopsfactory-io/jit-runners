@@ -458,7 +458,7 @@ make ami.build
 Or trigger a build from CI:
 
 ```bash
-gh workflow run ami-build.yml -f distribute=true
+gh workflow run ami-build.yml
 ```
 
 ### Prevention

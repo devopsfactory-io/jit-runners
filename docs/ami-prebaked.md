@@ -22,22 +22,20 @@ The corresponding EC2 tags are:
 - `built-by` — `packer`
 - `tools` — comma-separated list of pre-installed tools: `git,docker,python3,node,go,awscli,kubectl,helm,gh,jq,yq,git-lfs,gcc,cmake,make`
 
-PR test builds use the prefix `jit-runner-pr` and are private (not published to the Community AMI catalog). They are automatically deregistered after the build completes.
+PR test builds use the prefix `jit-runner-pr` and are private. They are automatically deregistered after the build completes.
 
-## Using the published AMI
+## Design: private, single-region AMIs
 
-The AMI is published to the **AWS Community AMI catalog** and can be used by any AWS account.
+jit-runners AMIs are **private** and built in **us-east-2 only**. This is intentional: the project is single-tenant (used only by the devopsfactory-io org), so publishing public "community AMIs" and maintaining a second distribution region added EBS-snapshot cost and Packer complexity for zero benefit. The `ami_groups` Packer variable defaults to `[]` (private); the previous `["all"]` default was removed.
 
-### Find the AMI
+If you need to use the AMI from another AWS account, build your own private AMI in the target account — see "Building your own AMI" below. Cross-account sharing is also possible by granting launch permission to specific account IDs (via `aws ec2 modify-image-attribute --launch-permission`, i.e. Packer's `ami_users`), but that is not done in CI. `ami_groups` only accepts `["all"]` (public) and is not for per-account sharing.
 
-**AWS Console:** EC2 > AMIs > Community AMIs > search `jit-runner`
-
-**AWS CLI:**
+### Find the AMI (self-account only)
 
 ```bash
 aws ec2 describe-images \
+  --owners self \
   --filters "Name=name,Values=jit-runner-*" \
-  --owners 767000629676 \
   --region us-east-2 \
   --query 'sort_by(Images, &CreationDate)[-1].{ID:ImageId,Name:Name,Created:CreationDate}' \
   --output table
@@ -79,13 +77,13 @@ If you want to customize the AMI or build for a specific runner version, use Pac
 
 > **Note:** The Packer source block sets `associate_public_ip_address = true` and `ssh_timeout = "10m"`. The public IP is required so Packer can SSH into the build instance when the default subnet does not auto-assign public IPs. The extended SSH timeout accommodates subnets where IP assignment is slow.
 
-### Build (source region only)
+### Build (us-east-2, private)
 
 ```bash
 make ami.build
 ```
 
-Builds a public AMI in `us-east-2` with runner version `2.332.0` and the version auto-detected from git tags (defaults to `dev` if no tags exist). Override versions:
+Builds a private AMI in `us-east-2` with runner version `2.332.0` and the version auto-detected from git tags (defaults to `dev` if no tags exist). Override versions:
 
 ```bash
 make ami.build RUNNER_VERSION=2.335.0
@@ -98,25 +96,7 @@ make ami.build RUNNER_VERSION=2.335.0 JIT_RUNNERS_VERSION=v0.3.0
 make ami.build-test
 ```
 
-Builds a private (non-public) AMI in `us-east-2` — sets `ami_groups=[]` so it is not published to the Community AMI catalog. Useful for validating Packer changes locally before merging. Also passes `JIT_RUNNERS_VERSION` automatically from git.
-
-### Build and distribute to us-east-1
-
-```bash
-make ami.build-distribute
-```
-
-Builds in `us-east-2` (source) and copies the public AMI to `us-east-1` — the only two regions in the distribution set (#83).
-
-### Copy an existing AMI to us-east-1
-
-If you already have an AMI and want to distribute it without rebuilding:
-
-```bash
-make ami.copy AMI_ID=ami-054a333b01986bcf5
-```
-
-This copies the AMI to us-east-1 (the only distribution region besides the us-east-2 source), waits for the copy to become available, and makes it public.
+Builds a private AMI in `us-east-2` with the `jit-runner-pr` name prefix. Useful for validating Packer changes locally before merging. Also passes `JIT_RUNNERS_VERSION` automatically from git.
 
 ### Validate the Packer template
 
@@ -132,7 +112,7 @@ make ami.validate
 | `jit_runners_version` | `dev` | jit-runners project version (e.g. `v0.3.0`). Defaults to `dev` for local builds. Auto-detected from git tags in CI. |
 | `aws_region` | `us-east-2` | Region to build the AMI in |
 | `ami_regions` | `[]` | Additional regions to copy the AMI to |
-| `ami_groups` | `["all"]` | Launch permission groups. Use `["all"]` for public (community AMI), `[]` for private (PR test builds). |
+| `ami_groups` | `[]` | Launch permission groups. Default `[]` keeps the AMI private (single-tenant). Set `["all"]` only to publish a community AMI. |
 | `instance_type` | `t3.medium` | Instance type for the build instance |
 | `extra_script` | `""` | Path to an extra setup script (see below) |
 | `ami_name_prefix` | `jit-runner` | Prefix for the AMI name |
@@ -247,61 +227,25 @@ The GitHub Actions workflow (`.github/workflows/ami-build.yml`) builds AMIs auto
 - **Runs on**: `ubuntu-latest` (GitHub-hosted runners). The self-hosted runner security group only permits egress on ports 443/80/53/5432 — SSH (port 22) is blocked outbound, which causes Packer to time out when connecting to the build instance. GitHub-hosted runners have unrestricted network access. Using them also avoids the circular dependency of building jit-runner AMIs on the jit-runners infrastructure itself.
 - **Triggers**:
   - `workflow_dispatch` (manual)
-  - Version tag push (`v*`) — produces a public, distributable AMI matching the release
-  - Pull request targeting `main` when `infra/packer/**` changes — produces a private, single-region test AMI that is automatically cleaned up after the build
-- **Inputs**: `runner_version`, `go_version`, `node_major_version`, `jit_runners_version` (auto-detected from git tags if empty), `extra_script`, `distribute` (boolean)
+  - Version tag push (`v*`) — produces a private us-east-2 AMI matching the release
+  - Pull request targeting `main` when `infra/packer/**` changes — produces a private, single-region test AMI with the `jit-runner-pr` prefix, automatically cleaned up after the build
+- **Inputs**: `runner_version`, `go_version`, `node_major_version`, `jit_runners_version` (auto-detected from git tags if empty), `extra_script`
 - **Version auto-detection**: If `jit_runners_version` input is empty, the workflow uses `git describe --tags --always` to derive the version from the most recent tag. On tag pushes (`refs/tags/v*`), it uses the tag name directly.
 - **Auth**: OIDC role assumption via `AMI_BUILD_ROLE_ARN` secret
-- **PR builds**: AMI is built with `ami_groups=[]` (private), a `jit-runner-pr` name prefix, and no distribution. A cleanup step deregisters the AMI and deletes its snapshots after the build.
+- **AMI visibility**: All non-PR builds produce a **private** AMI in `us-east-2` (`ami_groups=[]` is the Packer default). The previous "Disable block public access" and multi-region copy steps have been removed.
+- **PR builds**: AMI is built with a `jit-runner-pr` name prefix and automatically cleaned up (AMI deregistered + snapshots deleted) after the build.
 - **Output**: AMI ID, jit-runners version, runner version, Go version, and Node.js version in the GitHub Actions job summary
 
-## Multi-region cost
+## AMI retention policy
 
-Each additional distribution region incurs:
-
-- **One-time**: ~$0.06-0.08 cross-region data transfer per region (~3-4 GB AMI)
-- **Monthly**: ~$0.15-0.20/month EBS snapshot storage per region
-
-With the single distribution region (`us-east-1`, plus the `us-east-2` source): ~$0.06-0.08 one-time + ~$0.15-0.20/month — down from ~$0.60 + ~$1.50-1.80/month under the former 9-region model (#83).
-
-## Public AMI retention & deprecation policy
-
-Public jit-runner AMIs are published in **us-east-2** (source) and **us-east-1** only. A
-post-build job (`ami-build.yml` → `prune`) retains the **latest 2** public AMIs per region plus
-the AMI currently referenced by the production CloudFormation stack's `DefaultAMI`. Older public
-AMIs are deregistered and their snapshots deleted.
-
-**Consumer guidance:** track the latest published AMI. If you pin an AMI ID, you get at most one
-release of deprecation grace before it is deregistered; pinning older images is at your own risk.
+Private jit-runner AMIs are stored in **us-east-2** only. A post-build job (`ami-build.yml` → `prune`) retains the **latest 2** AMIs plus the AMI currently referenced by the production CloudFormation stack's `DefaultAMI`. Older AMIs are deregistered and their snapshots deleted.
 
 The prune is implemented by `infra/scripts/ami-prune.sh` (dry-run by default):
 
 ```bash
-# dry-run both active regions
-infra/scripts/ami-prune.sh --regions us-east-1,us-east-2 --stack-name jit-runners --keep-latest 2
+# dry-run us-east-2
+infra/scripts/ami-prune.sh --regions us-east-2 --stack-name jit-runners --keep-latest 2
 # or via make
 make ami.prune            # dry-run
 make ami.prune APPLY=1    # apply
 ```
-
-## One-time purge of decommissioned regions
-
-jit-runners previously distributed public AMIs to 9 regions. After #83 those are reduced to
-us-east-1 + us-east-2. To reclaim the orphaned public AMIs in the decommissioned regions
-(`us-west-1, us-west-2, eu-west-1, eu-west-2, eu-west-3, eu-central-1, eu-north-1, sa-east-1`):
-
-1. **Announce** the region removal in the release notes (external fleets there lose their public
-   source AMIs).
-2. Dry-run and review:
-   ```bash
-   infra/scripts/ami-prune.sh \
-     --regions us-west-1,us-west-2,eu-west-1,eu-west-2,eu-west-3,eu-central-1,eu-north-1,sa-east-1 \
-     --keep-latest 0
-   ```
-3. Apply: re-run with `--apply`.
-4. Re-enable the guardrail in each purged region:
-   ```bash
-   for r in us-west-1 us-west-2 eu-west-1 eu-west-2 eu-west-3 eu-central-1 eu-north-1 sa-east-1; do
-     aws ec2 enable-image-block-public-access --region "$r" --image-block-public-access-state block-new-sharing
-   done
-   ```

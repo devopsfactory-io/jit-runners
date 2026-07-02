@@ -23,10 +23,6 @@ on:
         description: "Path to extra setup script (relative to infra/packer/)"
         default: ""
         required: false
-      distribute:
-        description: "Copy AMI to all distribution regions (US, EU, SA)"
-        type: boolean
-        default: true
   push:
     tags:
       - "v*"
@@ -40,10 +36,6 @@ permissions: {}
 concurrency:
   group: ami-build
   cancel-in-progress: false
-
-env:
-  # Public AMIs are published in the us-east-2 source region + us-east-1 only (cost; #83).
-  AMI_DISTRIBUTION_REGIONS: us-east-1
 
 jobs:
   build:
@@ -87,22 +79,6 @@ jobs:
         working-directory: infra/packer
         run: packer validate -only=amazon-ebs.jit-runner -var "runner_version=${{ inputs.runner_version || '2.332.0' }}" .
 
-      - name: Disable block public access in source region
-        if: github.event_name != 'pull_request'
-        run: |
-          echo "Disabling block public access in us-east-2 (source)..."
-          aws ec2 disable-image-block-public-access --region us-east-2 || true
-
-      - name: Pre-build free-slot guard (us-east-2)
-        if: github.event_name != 'pull_request'
-        run: |
-          ./infra/scripts/ami-prune.sh \
-            --regions us-east-2 \
-            --stack-name jit-runners \
-            --keep-latest 2 \
-            --ensure-free 1 \
-            --apply
-
       - name: Packer build
         working-directory: infra/packer
         run: |
@@ -117,13 +93,11 @@ jobs:
           ARGS="${ARGS} -var node_major_version=${NODE_MAJOR}"
           ARGS="${ARGS} -var jit_runners_version=${JIT_VERSION}"
 
-          # PR builds: private AMI, no distribution, distinct prefix
+          # AMIs are private by default (ami_groups defaults to []). PR builds use a
+          # distinct prefix so their AMI is easy to identify and auto-clean.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            ARGS="${ARGS} -var ami_groups=[]"
             ARGS="${ARGS} -var ami_name_prefix=jit-runner-pr"
           fi
-          # Distribution to us-east-1 is handled by an explicit post-build step (publish-before-copy, #49);
-          # Packer builds + publishes the us-east-2 source only (ami_regions defaults to []).
 
           if [ -n "${{ inputs.extra_script }}" ]; then
             ARGS="${ARGS} -var extra_script=${{ inputs.extra_script }}"
@@ -155,64 +129,14 @@ jobs:
           NODE_MAJOR="${{ inputs.node_major_version || '22' }}"
           echo "| Go Version | ${GO_VERSION} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Node.js | ${NODE_MAJOR}.x LTS |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Source Region | us-east-2 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Region | us-east-2 (private) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
 
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "| Distributed To | _(none — PR test build)_ |" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "This AMI will be cleaned up after the build." >> "$GITHUB_STEP_SUMMARY"
+            echo "PR test AMI — cleaned up after the build." >> "$GITHUB_STEP_SUMMARY"
           else
-            DISTRIBUTE="${{ inputs.distribute || 'true' }}"
-            if [ "${DISTRIBUTE}" = "true" ]; then
-              echo "| Distributed To | us-east-1 |" >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "| Distributed To | _(none — source region only)_ |" >> "$GITHUB_STEP_SUMMARY"
-            fi
-            echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "Use this AMI as \`DefaultAMI\` in CloudFormation or \`default_ami\` in Terraform." >> "$GITHUB_STEP_SUMMARY"
           fi
-
-      - name: Pre-distribute free-slot guard (us-east-1)
-        if: github.event_name != 'pull_request' && (inputs.distribute == true || inputs.distribute == '')
-        run: |
-          # Free a public-AMI slot in us-east-1 BEFORE the copy, so the publish below
-          # cannot hit the 5-public-AMI quota (the post-build prune only runs afterward).
-          # No-op unless us-east-1 is at/near the ceiling; never drops the 2 newest. (#86)
-          ./infra/scripts/ami-prune.sh \
-            --regions us-east-1 \
-            --keep-latest 2 \
-            --ensure-free 1 \
-            --apply
-
-      - name: Distribute source AMI to us-east-1
-        if: github.event_name != 'pull_request' && (inputs.distribute == true || inputs.distribute == '')
-        working-directory: infra/packer
-        run: |
-          set -euo pipefail
-          AMI_ID=$(jq -r '.builds[-1].artifact_id' manifest.json | cut -d: -f2)
-          AMI_NAME=$(aws ec2 describe-images --image-ids "${AMI_ID}" --region us-east-2 \
-            --query 'Images[0].Name' --output text)
-          TARGET=us-east-1
-          echo "Disabling block public access in ${TARGET}..."
-          aws ec2 disable-image-block-public-access --region "${TARGET}" || true
-          echo "Copying ${AMI_ID} (${AMI_NAME}) to ${TARGET}..."
-          if ! NEW_AMI=$(aws ec2 copy-image --source-region us-east-2 --source-image-id "${AMI_ID}" \
-            --region "${TARGET}" --name "${AMI_NAME}" --description "jit-runner pre-baked AMI" \
-            --query 'ImageId' --output text); then
-            echo "::warning::copy-image to ${TARGET} failed; source us-east-2 AMI remains usable."
-            exit 0
-          fi
-          echo "  -> ${NEW_AMI}; waiting for available..."
-          if ! aws ec2 wait image-available --image-ids "${NEW_AMI}" --region "${TARGET}"; then
-            echo "::warning::Copy ${NEW_AMI} did not become available; source us-east-2 AMI remains usable."
-            exit 0
-          fi
-          if ! aws ec2 modify-image-attribute --image-id "${NEW_AMI}" --region "${TARGET}" \
-               --launch-permission "Add=[{Group=all}]"; then
-            echo "::warning::Failed to publish ${NEW_AMI} in ${TARGET}; source us-east-2 AMI remains usable."
-            exit 0
-          fi
-          echo "Published ${NEW_AMI} in ${TARGET}."
 
       - name: Cleanup PR test AMI
         if: always() && github.event_name == 'pull_request'
@@ -256,7 +180,6 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AMI_BUILD_ROLE_ARN }}
           aws-region: us-east-2
-      - name: Prune stale public AMIs (keep latest 2 + live DefaultAMI)
+      - name: Prune stale AMIs (keep latest 2 + live DefaultAMI)
         run: |
           ./infra/scripts/ami-prune.sh --regions us-east-2 --stack-name jit-runners --keep-latest 2 --apply
-          ./infra/scripts/ami-prune.sh --regions us-east-1 --keep-latest 2 --apply
