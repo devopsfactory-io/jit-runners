@@ -60,7 +60,7 @@ variable "default_instance_type" {
 variable "label_mappings" {
   description = "JSON-encoded label-to-instance-type mappings"
   type        = string
-  default     = "[]"
+  default     = "[{\"label\":\"nano\",\"instance_type\":\"t2.nano\"},{\"label\":\"micro\",\"instance_type\":\"t2.micro\"},{\"label\":\"small\",\"instance_type\":\"t2.small\"},{\"label\":\"medium\",\"instance_type\":\"t3.medium\",\"instance_types\":[\"t3.medium\",\"t3a.medium\",\"m6i.large\",\"m5.large\"]},{\"label\":\"large\",\"instance_type\":\"c6i.xlarge\",\"instance_types\":[\"c6i.xlarge\",\"c5.xlarge\",\"c5a.xlarge\",\"m6i.xlarge\"]},{\"label\":\"release\",\"instance_type\":\"m5.xlarge\",\"instance_types\":[\"m5.xlarge\",\"m5a.xlarge\",\"m6i.xlarge\",\"m6a.xlarge\"]}]"
 }
 
 variable "runner_version" {

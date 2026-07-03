@@ -10,12 +10,14 @@ import (
 type LaunchSpec struct {
 	// Labels passed to the JIT runner registration; used to pick instance type.
 	Labels []string
-	// InstanceType (AWS) / MachineType (GCP), resolved by the caller from labels.
-	InstanceType string
+	// InstanceTypes is the ordered candidate list (AWS instance types / GCP
+	// machine types). The launcher tries them in order; always ≥1 element.
+	InstanceTypes []string
 	// ImageID is the AMI ID (AWS) or fully-qualified GCE image URI (GCP).
 	ImageID string
-	// SubnetID (AWS) / Subnet (GCP).
-	SubnetID string
+	// SubnetIDs are the candidate subnets (AWS) / subnet (GCP, uses [0]).
+	// May be empty: AWS lets EC2 pick a default-VPC subnet; GCP uses opts.Subnet.
+	SubnetIDs []string
 	// UserData (AWS cloud-init) / StartupScript (GCP). Both pass the same script body.
 	UserData string
 	// RunnerID is the jit-runners-assigned ID, surfaced as a tag/label so the

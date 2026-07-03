@@ -78,12 +78,12 @@ func defaultOpts() LauncherOptions {
 
 func defaultSpec() compute.LaunchSpec {
 	return compute.LaunchSpec{
-		Labels:       []string{"large"},
-		InstanceType: "n2-standard-4",
-		ImageID:      "projects/ubuntu-os-cloud/global/images/ubuntu-2404-noble-amd64-v20240801",
-		SubnetID:     "projects/my-project/regions/us-central1/subnetworks/default",
-		UserData:     base64.StdEncoding.EncodeToString([]byte("#!/bin/bash\necho hello")),
-		RunnerID:     "42",
+		Labels:        []string{"large"},
+		InstanceTypes: []string{"n2-standard-4"},
+		ImageID:       "projects/ubuntu-os-cloud/global/images/ubuntu-2404-noble-amd64-v20240801",
+		SubnetIDs:     []string{"projects/my-project/regions/us-central1/subnetworks/default"},
+		UserData:      base64.StdEncoding.EncodeToString([]byte("#!/bin/bash\necho hello")),
+		RunnerID:      "42",
 	}
 }
 
@@ -122,6 +122,44 @@ func TestLauncher_Launch_ReturnsInstance(t *testing.T) {
 	labels := fake.insertReq.GetInstanceResource().GetLabels()
 	if labels[labelManagedBy] != labelManagedVal {
 		t.Errorf("label %q = %q, want %q", labelManagedBy, labels[labelManagedBy], labelManagedVal)
+	}
+}
+
+func TestLauncher_Launch_NoInstanceTypesErrors(t *testing.T) {
+	fake := &fakeGCE{insertReturnID: "jit-runner-abcdef12"}
+	launcher := newLauncherWithAPI(fake, defaultOpts())
+
+	spec := defaultSpec()
+	spec.InstanceTypes = nil
+
+	if _, err := launcher.Launch(context.Background(), spec); err == nil {
+		t.Fatal("want error for empty InstanceTypes, got nil")
+	}
+	if fake.insertCalled {
+		t.Error("Insert should not be called when InstanceTypes is empty")
+	}
+}
+
+func TestLauncher_Launch_EmptySubnetUsesOptsFallback(t *testing.T) {
+	fake := &fakeGCE{insertReturnID: "jit-runner-abcdef12"}
+	opts := defaultOpts()
+	launcher := newLauncherWithAPI(fake, opts)
+
+	spec := defaultSpec()
+	spec.SubnetIDs = nil
+
+	if _, err := launcher.Launch(context.Background(), spec); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !fake.insertCalled {
+		t.Fatal("expected Insert to be called")
+	}
+	nics := fake.insertReq.GetInstanceResource().GetNetworkInterfaces()
+	if len(nics) == 0 {
+		t.Fatal("no network interfaces in InsertInstanceRequest")
+	}
+	if got := nics[0].GetSubnetwork(); got != opts.Subnet {
+		t.Errorf("subnetwork = %q, want opts fallback %q", got, opts.Subnet)
 	}
 }
 

@@ -70,7 +70,7 @@ Parameters:
 
   LabelMappings:
     Type: String
-    Default: "[]"
+    Default: '[{"label":"nano","instance_type":"t2.nano"},{"label":"micro","instance_type":"t2.micro"},{"label":"small","instance_type":"t2.small"},{"label":"medium","instance_type":"t3.medium","instance_types":["t3.medium","t3a.medium","m6i.large","m5.large"]},{"label":"large","instance_type":"c6i.xlarge","instance_types":["c6i.xlarge","c5.xlarge","c5a.xlarge","m6i.xlarge"]},{"label":"release","instance_type":"m5.xlarge","instance_types":["m5.xlarge","m5a.xlarge","m6i.xlarge","m6a.xlarge"]}]'
     Description: "(Optional) JSON array of label-to-instance-type mappings."
 
   StaleThresholdMinutes:
@@ -413,6 +413,7 @@ Resources:
           EC2_DEFAULT_AMI: !Ref DefaultAMI
           DEFAULT_INSTANCE_TYPE: !Ref DefaultInstanceType
           LABEL_MAPPINGS: !Ref LabelMappings
+          EC2_CPU_CREDITS: standard
           RUNNER_VERSION: !Ref RunnerVersion
 
   ScaleUpLogGroup:

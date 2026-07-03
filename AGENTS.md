@@ -11,7 +11,7 @@ Guidance for AI coding agents working on the jit-runners project.
 Five serverless functions share code via `lambda/internal/`:
 
 - **webhook**: Validates the GitHub webhook signature, parses the `workflow_job` event, and routes to the jobs queue (`queued` action) or the lifecycle queue (`in_progress` / `completed` action).
-- **scaleup**: Consumes jobs-queue messages, generates a JIT runner token, and launches an EC2 spot or GCE spot VM. Tracks state in DynamoDB (AWS) or Firestore Native (GCP).
+- **scaleup**: Consumes jobs-queue messages, generates a JIT runner token, and launches an EC2 spot or GCE spot VM. On AWS, tries multiple candidate instance types × subnets (AZs) for spot (first-success-wins) before falling back to on-demand; emits `event=spot_exhausted_ondemand_fallback` on fallback. Tracks state in DynamoDB (AWS) or Firestore Native (GCP).
 - **scaledown**: Cleans up stale/orphaned instances on a periodic schedule (every 5 minutes); re-enqueues stuck pending runners.
 - **lifecycle**: Consumes lifecycle-queue messages, applies state transitions, deregisters runners.
 - **rebalancer**: Runs every 1 minute to detect drift between GitHub queue depth and the state store's pending count, re-publishing jobs-queue messages to recover stranded queued jobs.

@@ -4,12 +4,17 @@ package ec2
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"hash/fnv"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/smithy-go"
 
 	"github.com/devopsfactory-io/jit-runners/lambda/internal/compute"
 )
@@ -34,6 +39,7 @@ type LauncherOptions struct {
 	SecurityGroupID    string
 	IAMInstanceProfile string
 	SpotMaxPrice       string // empty = on-demand price cap
+	CPUCredits         string // "standard" pins burstable (t-family) launches; "" = AWS default (unlimited)
 	ExtraTags          map[string]string
 }
 
@@ -53,29 +59,108 @@ func NewLauncher(client API, opts LauncherOptions) *Launcher {
 	return &Launcher{client: client, opts: opts}
 }
 
-// Launch starts an EC2 spot instance with the given spec, falling back to
-// on-demand if the spot request fails. Returns the resulting Instance.
+// Launch diversifies across the ordered candidate instance types and subnets,
+// requesting spot capacity first-success-wins. It aborts early only on a closed
+// allow-list of fatal request errors (isFatal); every other error — including
+// unknown API codes and transport errors — is treated as retryable so the loop
+// continues, preserving the "launch success ≥ today" guarantee. If no spot
+// attempt succeeds, it makes one on-demand last-resort attempt on the primary
+// candidate/subnet. Returns the resulting Instance.
 func (l *Launcher) Launch(ctx context.Context, spec compute.LaunchSpec) (compute.Instance, error) {
-	id, err := l.runInstance(ctx, spec, true)
-	if err != nil {
-		// Spot launch failed; fall back to on-demand to preserve prior behavior.
-		idOD, errOD := l.runInstance(ctx, spec, false)
-		if errOD != nil {
-			return compute.Instance{}, fmt.Errorf("spot and on-demand launch both failed (spot: %v): %w", err, errOD)
-		}
-		id = idOD
+	if len(spec.InstanceTypes) == 0 {
+		return compute.Instance{}, fmt.Errorf("launch: spec has no instance types")
 	}
-	return compute.Instance{
-		ID:         id,
-		State:      "pending",
-		LaunchedAt: time.Now().UTC(),
-		RunnerID:   spec.RunnerID,
-	}, nil
+	subnets := spec.SubnetIDs
+	if len(subnets) == 0 {
+		subnets = []string{""} // "" → EC2 picks a default-VPC subnet (today's behavior)
+	}
+	subnets = rotate(subnets, spec.RunnerID)
+
+	var lastErr error
+	for _, it := range spec.InstanceTypes {
+		for _, sn := range subnets {
+			if err := ctx.Err(); err != nil {
+				return compute.Instance{}, fmt.Errorf("launch: context done during spot sweep: %w", err)
+			}
+			id, err := l.runInstance(ctx, spec, it, sn, true)
+			if err == nil {
+				return newInstance(id, spec), nil
+			}
+			if isFatal(err) {
+				return compute.Instance{}, fmt.Errorf("launch aborted (fatal): %w", err)
+			}
+			lastErr = err
+		}
+	}
+	log.Printf("event=spot_exhausted_ondemand_fallback runner=%s labels=%v attempted_types=%v", spec.RunnerID, spec.Labels, spec.InstanceTypes)
+	id, err := l.runInstance(ctx, spec, spec.InstanceTypes[0], subnets[0], false)
+	if err != nil {
+		return compute.Instance{}, fmt.Errorf("spot and on-demand launch both failed (spot: %v): %w", lastErr, err)
+	}
+	return newInstance(id, spec), nil
+}
+
+func newInstance(id string, spec compute.LaunchSpec) compute.Instance {
+	return compute.Instance{ID: id, State: "pending", LaunchedAt: time.Now().UTC(), RunnerID: spec.RunnerID}
+}
+
+// rotate offsets the subnet order deterministically by the runner ID so
+// concurrent launches spread across AZs instead of all starting at subnets[0].
+func rotate(subnets []string, seed string) []string {
+	if len(subnets) <= 1 {
+		return subnets
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(seed))
+	off := int(h.Sum32() % uint32(len(subnets)))
+	out := make([]string, 0, len(subnets))
+	out = append(out, subnets[off:]...)
+	out = append(out, subnets[:off]...)
+	return out
+}
+
+// isFatal reports whether err is a request-level error that would fail on
+// on-demand too — the only case where skipping the on-demand fallback is safe.
+// DEFAULT: unknown/non-API errors are retryable (return false), preserving the
+// "launch success ≥ today" guarantee.
+func isFatal(err error) bool {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	code := apiErr.ErrorCode()
+	if strings.HasPrefix(code, "InvalidAMIID") {
+		return true
+	}
+	switch code {
+	case "UnauthorizedOperation", "AuthFailure", "PendingVerification":
+		return true
+	// NOTE: InvalidParameterValue/Combination are treated as fatal (they fail on
+	// on-demand too). This is safe only while spot-specific params are hardcoded
+	// valid constants. If SpotMaxPrice (currently unwired) is ever populated and
+	// misconfigured, it surfaces as InvalidParameterValue on the SPOT request only
+	// — revisit excluding these codes then, so a bad MaxPrice still falls back.
+	case "InvalidParameterValue", "InvalidParameterCombination":
+		return true
+	}
+	// Allow-list is intentionally minimal and grows only as production logs
+	// reveal codes that also fail on-demand. Unknown ⇒ retryable (see doc above).
+	return false
+}
+
+// isBurstable reports whether instanceType is a t-family (burstable) type.
+func isBurstable(instanceType string) bool {
+	for _, p := range []string{"t2.", "t3.", "t3a.", "t4g."} {
+		if strings.HasPrefix(instanceType, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // runInstance issues a single RunInstances call. If spot is true, market
 // options are configured for spot pricing; otherwise the request is on-demand.
-func (l *Launcher) runInstance(ctx context.Context, spec compute.LaunchSpec, spot bool) (string, error) {
+func (l *Launcher) runInstance(ctx context.Context, spec compute.LaunchSpec, instanceType, subnetID string, spot bool) (string, error) {
 	tags := make([]types.Tag, 0, len(l.opts.ExtraTags)+2)
 	tags = append(tags, types.Tag{
 		Key:   aws.String(tagManagedBy),
@@ -93,13 +178,18 @@ func (l *Launcher) runInstance(ctx context.Context, spec compute.LaunchSpec, spo
 
 	input := &ec2.RunInstancesInput{
 		ImageId:      aws.String(spec.ImageID),
-		InstanceType: types.InstanceType(spec.InstanceType),
+		InstanceType: types.InstanceType(instanceType),
 		MinCount:     aws.Int32(1),
 		MaxCount:     aws.Int32(1),
 		UserData:     aws.String(spec.UserData),
 		TagSpecifications: []types.TagSpecification{
 			{ResourceType: types.ResourceTypeInstance, Tags: tags},
 		},
+	}
+	if l.opts.CPUCredits != "" && isBurstable(instanceType) {
+		input.CreditSpecification = &types.CreditSpecificationRequest{
+			CpuCredits: aws.String(l.opts.CPUCredits),
+		}
 	}
 	if spot {
 		input.InstanceMarketOptions = &types.InstanceMarketOptionsRequest{
@@ -113,8 +203,8 @@ func (l *Launcher) runInstance(ctx context.Context, spec compute.LaunchSpec, spo
 		}
 	}
 
-	if spec.SubnetID != "" {
-		input.SubnetId = aws.String(spec.SubnetID)
+	if subnetID != "" {
+		input.SubnetId = aws.String(subnetID)
 	}
 	if l.opts.SecurityGroupID != "" {
 		input.SecurityGroupIds = []string{l.opts.SecurityGroupID}

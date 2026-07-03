@@ -67,7 +67,7 @@ graph LR
 The five serverless functions share code via `lambda/internal/`:
 
 - **webhook** — Validates the GitHub webhook signature, parses the `workflow_job` event, and routes the event to the jobs queue (action=queued) or the lifecycle queue (action=in_progress | completed).
-- **scaleup** — Processes jobs-queue messages, generates a JIT runner token via the GitHub API, and launches an EC2 spot or GCE spot VM with a startup script that registers and runs the ephemeral runner.
+- **scaleup** — Processes jobs-queue messages, generates a JIT runner token via the GitHub API, and launches an EC2 spot or GCE spot VM with a startup script that registers and runs the ephemeral runner. On AWS, it tries multiple candidate instance types × subnets (AZs) in sequence for spot (first-success-wins) before falling back to on-demand as a last resort; falls back are logged as `event=spot_exhausted_ondemand_fallback`.
 - **scaledown** — Runs on a periodic schedule (every 5 minutes) to clean up stale or orphaned instances, deregister abandoned runners, and re-enqueue jobs whose pending runners got stuck.
 - **lifecycle** — Processes lifecycle-queue messages (`workflow_job` action=in_progress | completed) and applies state transitions and runner deregistration.
 - **rebalancer** — Runs on a tighter schedule (every 1 minute) to detect drift between GitHub queue depth and DDB/Firestore pending count, re-publishing jobs-queue messages for any gap. Closes the stranded-queued-jobs cycle in production.

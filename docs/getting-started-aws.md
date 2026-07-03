@@ -77,7 +77,8 @@ Edit `terraform.tfvars` with your values:
 - `default_ami` — AMI ID for runner instances (Amazon Linux 2023; build a private AMI with `make ami.build` or `make ami.build-test`, then use that ID).
 
 Optional:
-- `label_mappings` — JSON array mapping workflow labels to instance types (default: `[]`, which uses `t3.medium`).
+- `label_mappings` — JSON array mapping workflow labels to instance types. The default is a six-class mapping (nano/micro/small/medium/large/release); see [Default `LabelMappings`](#default-labelmappings) below. Pass a single `instance_type` per entry for a fixed type, or an `instance_types` list to enable spot diversification across multiple candidate types (first-success-wins, on-demand fallback last).
+- `ec2_cpu_credits` — CPU credit mode for t-family instances (`standard` or `unlimited`). Defaults to `standard` — pins t2/t3/t3a/t4g runners to standard credit mode so bursting never bills at the unlimited rate. Only relevant when the instance type is a t-family type.
 - `stale_threshold_minutes` — Minutes before a pending runner is considered stale (default: `10`).
 - `max_runner_age_minutes` — Maximum age before force-termination (default: `360`).
 - `max_re_enqueue_attempts` — Re-enqueue budget for stuck pending runners (default: `3`).
@@ -156,25 +157,25 @@ aws cloudformation deploy \
 
 Add these to `--parameter-overrides` if needed:
 
-- `LabelMappings='[{"label":"large","instance_type":"c5.xlarge"},{"label":"release","instance_type":"m5.xlarge"}]'` — Map workflow labels to instance types.
+- `LabelMappings='[{"label":"large","instance_type":"c6i.xlarge","instance_types":["c6i.xlarge","c5.xlarge","c5a.xlarge","m6i.xlarge"]},{"label":"release","instance_type":"m5.xlarge"}]'` — Map workflow labels to instance types. Each entry may include an optional `instance_types` list (ordered candidates for spot diversification); when present it supersedes `instance_type` for spot requests. A plain `instance_type` without `instance_types` continues to work unchanged. Note: `--parameter-overrides` replaces the **entire** `LabelMappings` value, so any override must include every label class you want (see the full six-class default in the [Default `LabelMappings`](#default-labelmappings) table below) — the two-entry example above is illustrative, not additive.
 - `StaleThresholdMinutes=10` — Minutes before a pending runner is considered stale (default: 10).
 - `MaxRunnerAgeMinutes=360` — Maximum age before force-termination (default: 360).
 - `MaxReEnqueueAttempts=3` — Re-enqueue budget for stuck pending runners (default: 3).
 
 #### Default `LabelMappings`
 
-The template ships with the following label-to-instance-type mappings:
+Both the CloudFormation template and the Terraform module ship with the following six-class default. Labels without an `instance_types` list launch a single fixed type; labels with a list try each candidate in order on spot (first-success-wins) and fall back to on-demand only if every candidate is unavailable.
 
-| Label | Instance type |
-|-------|---------------|
-| nano | t2.nano |
-| micro | t2.micro |
-| small | t2.small |
-| medium | t3.medium |
-| large | c5.xlarge |
-| release | m5.xlarge |
+| Label | Primary type | Spot candidate list |
+|-------|-------------|---------------------|
+| nano | t2.nano | _(single type)_ |
+| micro | t2.micro | _(single type)_ |
+| small | t2.small | _(single type)_ |
+| medium | t3.medium | t3.medium, t3a.medium, m6i.large, m5.large |
+| large | c6i.xlarge | c6i.xlarge, c5.xlarge, c5a.xlarge, m6i.xlarge |
+| release | m5.xlarge | m5.xlarge, m5a.xlarge, m6i.xlarge, m6a.xlarge |
 
-The `release` label is intended for release workflows that require a stable, low-interruption instance type:
+The `release` label is intended for release workflows that benefit from spot diversification across stable, low-interruption families:
 
 ```yaml
 jobs:
@@ -182,7 +183,7 @@ jobs:
     runs-on: [self-hosted, release]
 ```
 
-Override or extend these mappings via the `LabelMappings` parameter.
+Adding a plain `instance_type` without an `instance_types` list continues to work as before (single fixed type, no diversification). Override or extend these mappings via the `LabelMappings` parameter.
 
 #### Webhook URL
 

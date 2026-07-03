@@ -162,7 +162,7 @@ aws logs filter-log-events \
 
 ### Resolution
 
-The scaleup Lambda automatically falls back from spot to on-demand when spot capacity is unavailable. If both quotas are exhausted:
+The scaleup Lambda tries each candidate instance type (from the `instance_types` list in the matching `LABEL_MAPPINGS` entry) across all configured subnets before falling back to on-demand. When every candidate is exhausted it emits a `event=spot_exhausted_ondemand_fallback` log line and launches an on-demand instance. If both spot and on-demand quotas are exhausted:
 
 1. Failed SQS messages retry up to 3 times, then land in the DLQ.
 2. Check if the workflow runs are still waiting -- if so, redrive the DLQ once capacity is available (see [SQS DLQ Accumulation](#3-sqs-dead-letter-queue-dlq-accumulation)).
@@ -193,7 +193,48 @@ Increases are typically approved within minutes for reasonable values.
 
 ---
 
-## 3. SQS Dead Letter Queue (DLQ) Accumulation
+## 3. Frequent On-Demand Fallback
+
+### Symptom
+
+Runners launch successfully but costs are higher than expected. The scaleup Lambda logs contain frequent `event=spot_exhausted_ondemand_fallback` lines.
+
+### Root Cause
+
+The scaleup Lambda tries each candidate instance type in the `instance_types` list (from the matching `LABEL_MAPPINGS` entry) across all configured subnets in order. An on-demand fallback fires only when every spot combination is unavailable. Frequent fallback means spot capacity is consistently thin for the configured candidate types in your region and AZs.
+
+### Diagnosis
+
+```bash
+# List on-demand fallback events in the last hour
+aws logs filter-log-events \
+  --log-group-name "/aws/lambda/jit-runners-scaleup" \
+  --start-time "$(date -d '1 hour ago' +%s000 2>/dev/null || date -v-1H +%s000)" \
+  --filter-pattern '"spot_exhausted_ondemand_fallback"' \
+  --query 'events[].message'
+```
+
+Each log line includes the label class (`labels=`) and the list of candidate instance types that were tried (`attempted_types=`), which identifies which instance family is exhausted.
+
+### Resolution
+
+Expand the `instance_types` candidate list for the affected label class to include additional families or sizes with historically better spot availability. For example, to add `m7i.xlarge` as a fallback for `large`:
+
+```json
+{"label":"large","instance_type":"c6i.xlarge","instance_types":["c6i.xlarge","c5.xlarge","c5a.xlarge","m6i.xlarge","m7i.xlarge"]}
+```
+
+Update the `LabelMappings` parameter (CloudFormation) or `label_mappings` variable (Terraform) and redeploy. A plain `instance_type` without an `instance_types` list always goes directly to on-demand when spot is unavailable; adding an `instance_types` list enables diversified retries.
+
+### Prevention
+
+- Use 3-5 candidate instance types per label class covering at least two different CPU families.
+- Include candidates across similar sizes in different families (e.g. `c6i`, `c5a`, `m6i` for the `large` class) so that capacity pressure in one family does not exhaust all options.
+- Add subnets in additional AZs to the `SubnetIds` (CloudFormation) / `subnet_ids` (Terraform) parameter — the launcher tries every candidate type × every subnet combination before falling back.
+
+---
+
+## 4. SQS Dead Letter Queue (DLQ) Accumulation
 
 ### Symptom
 
@@ -270,7 +311,7 @@ aws cloudwatch put-metric-alarm \
 
 ---
 
-## 4. Stale DynamoDB Runner Entries
+## 5. Stale DynamoDB Runner Entries
 
 ### Symptom
 
@@ -339,7 +380,7 @@ aws events describe-rule --name jit-runners-scaledown-schedule
 
 ---
 
-## 5. Instance Self-Termination (Expected Behavior)
+## 6. Instance Self-Termination (Expected Behavior)
 
 ### Symptom
 
@@ -383,7 +424,7 @@ Only investigate if:
 
 ---
 
-## 6. AMI Version Mismatch
+## 7. AMI Version Mismatch
 
 ### Symptom
 
@@ -469,7 +510,7 @@ gh workflow run ami-build.yml
 
 ---
 
-## 7. Re-enqueue and DLQ inspection
+## 8. Re-enqueue and DLQ inspection
 
 ### Symptom: jobs stuck in GitHub's queued state for > StaleThresholdMinutes
 

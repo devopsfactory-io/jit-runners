@@ -84,6 +84,9 @@ func newLauncherWithAPI(api gceAPI, opts LauncherOptions) *Launcher {
 // It returns as soon as the insert request is accepted — it does NOT block on
 // the LRO, matching the AWS RunInstances fire-and-return pattern.
 func (l *Launcher) Launch(ctx context.Context, spec compute.LaunchSpec) (compute.Instance, error) {
+	if len(spec.InstanceTypes) == 0 {
+		return compute.Instance{}, fmt.Errorf("gcp/gce: launch: spec has no instance types")
+	}
 	// Decode the startup script from base64 so it can be set as metadata value.
 	scriptBytes, err := base64.StdEncoding.DecodeString(spec.UserData)
 	if err != nil {
@@ -95,7 +98,10 @@ func (l *Launcher) Launch(ctx context.Context, spec compute.LaunchSpec) (compute
 	if imageURI == "" {
 		imageURI = l.opts.Image
 	}
-	subnetURL := spec.SubnetID
+	subnetURL := ""
+	if len(spec.SubnetIDs) > 0 {
+		subnetURL = spec.SubnetIDs[0]
+	}
 	if subnetURL == "" {
 		subnetURL = l.opts.Subnet
 	}
@@ -103,7 +109,7 @@ func (l *Launcher) Launch(ctx context.Context, spec compute.LaunchSpec) (compute
 	// Build a deterministic instance name from the runner ID.  Names must be
 	// RFC1035: lowercase letters, digits, hyphens, max 63 chars.
 	name := fmt.Sprintf("jit-runner-%s", sanitizeLabel(spec.RunnerID))
-	machineTypeURL := fmt.Sprintf("zones/%s/machineTypes/%s", l.opts.Zone, spec.InstanceType)
+	machineTypeURL := fmt.Sprintf("zones/%s/machineTypes/%s", l.opts.Zone, spec.InstanceTypes[0])
 
 	labels := map[string]string{
 		labelManagedBy: labelManagedVal,

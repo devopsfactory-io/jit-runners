@@ -45,9 +45,14 @@ func newAWS(ctx context.Context) (*Bundle, error) {
 	lifecyclePub := awssqs.NewLifecyclePublisher(sqsClient, lifecycleURL)
 	store := awsdynamo.NewStore(dynamodb.NewFromConfig(awsCfg), tableName)
 
+	cpuCredits := os.Getenv("EC2_CPU_CREDITS")
+	if cpuCredits == "" {
+		cpuCredits = "standard"
+	}
 	launcher := awsec2.NewLauncher(awsec2sdk.NewFromConfig(awsCfg), awsec2.LauncherOptions{
 		SecurityGroupID:    os.Getenv("EC2_SECURITY_GROUP_ID"),
 		IAMInstanceProfile: os.Getenv("EC2_IAM_INSTANCE_PROFILE"),
+		CPUCredits:         cpuCredits,
 	})
 
 	secLoader := awssecrets.New(awssm.NewFromConfig(awsCfg))

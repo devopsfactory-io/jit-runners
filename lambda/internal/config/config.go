@@ -63,7 +63,10 @@ type Config struct {
 type LabelMapping struct {
 	Label        string `json:"label"`
 	InstanceType string `json:"instance_type"`
-	AMI          string `json:"ami,omitempty"`
+	// InstanceTypes is an optional ordered list of candidate instance types for
+	// spot diversification. When non-empty it supersedes InstanceType.
+	InstanceTypes []string `json:"instance_types,omitempty"`
+	AMI           string   `json:"ami,omitempty"`
 }
 
 // Load reads config from environment variables. If any *_SECRET_ARN env var
