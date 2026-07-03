@@ -60,7 +60,7 @@ variable "default_instance_type" {
 variable "label_mappings" {
   description = "JSON-encoded label-to-instance-type mappings"
   type        = string
-  default     = "[{\"label\":\"nano\",\"instance_type\":\"t2.nano\"},{\"label\":\"micro\",\"instance_type\":\"t2.micro\"},{\"label\":\"small\",\"instance_type\":\"t2.small\"},{\"label\":\"medium\",\"instance_type\":\"t3.medium\",\"instance_types\":[\"t3.medium\",\"t3a.medium\",\"m6i.large\",\"m5.large\"]},{\"label\":\"large\",\"instance_type\":\"c6i.xlarge\",\"instance_types\":[\"c6i.xlarge\",\"c5.xlarge\",\"c5a.xlarge\",\"m6i.xlarge\"]},{\"label\":\"release\",\"instance_type\":\"m5.xlarge\",\"instance_types\":[\"m5.xlarge\",\"m5a.xlarge\",\"m6i.xlarge\",\"m6a.xlarge\"]}]"
+  default     = "[{\"label\":\"nano\",\"instance_type\":\"t3a.nano\",\"instance_types\":[\"t3a.nano\",\"t3.nano\",\"t3a.micro\",\"t3.micro\"]},{\"label\":\"micro\",\"instance_type\":\"t3a.micro\",\"instance_types\":[\"t3a.micro\",\"t3.micro\",\"t3a.small\",\"t3.small\"]},{\"label\":\"small\",\"instance_type\":\"t3a.small\",\"instance_types\":[\"t3a.small\",\"t3.small\",\"t3a.medium\",\"t3.medium\"]},{\"label\":\"medium\",\"instance_type\":\"t3.medium\",\"instance_types\":[\"t3.medium\",\"t3a.medium\",\"m6i.large\",\"m5.large\"]},{\"label\":\"large\",\"instance_type\":\"c6i.xlarge\",\"instance_types\":[\"c6i.xlarge\",\"c5.xlarge\",\"c5a.xlarge\",\"m6i.xlarge\"]},{\"label\":\"release\",\"instance_type\":\"m5.xlarge\",\"instance_types\":[\"m5.xlarge\",\"m5a.xlarge\",\"m6i.xlarge\",\"m6a.xlarge\"]}]"
 }
 
 variable "runner_version" {

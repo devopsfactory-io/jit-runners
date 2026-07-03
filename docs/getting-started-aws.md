@@ -166,11 +166,13 @@ Add these to `--parameter-overrides` if needed:
 
 Both the CloudFormation template and the Terraform module ship with the following six-class default. Labels without an `instance_types` list launch a single fixed type; labels with a list try each candidate in order on spot (first-success-wins) and fall back to on-demand only if every candidate is unavailable.
 
+> **Note:** avoid `t2.*` types — EC2 rejects them for new spot launches (`InvalidParameterValue: 't2.nano' is an unsupported instance type`), which strands every job on that label in a queued state. The small tiers default to `t3a`/`t3` for this reason (2026-07-03).
+
 | Label | Primary type | Spot candidate list |
 |-------|-------------|---------------------|
-| nano | t2.nano | _(single type)_ |
-| micro | t2.micro | _(single type)_ |
-| small | t2.small | _(single type)_ |
+| nano | t3a.nano | t3a.nano, t3.nano, t3a.micro, t3.micro |
+| micro | t3a.micro | t3a.micro, t3.micro, t3a.small, t3.small |
+| small | t3a.small | t3a.small, t3.small, t3a.medium, t3.medium |
 | medium | t3.medium | t3.medium, t3a.medium, m6i.large, m5.large |
 | large | c6i.xlarge | c6i.xlarge, c5.xlarge, c5a.xlarge, m6i.xlarge |
 | release | m5.xlarge | m5.xlarge, m5a.xlarge, m6i.xlarge, m6a.xlarge |
