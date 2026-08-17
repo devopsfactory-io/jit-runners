@@ -83,7 +83,7 @@ If you want to customize the AMI or build for a specific runner version, use Pac
 make ami.build
 ```
 
-Builds a private AMI in `us-east-2` with runner version `2.332.0` and the version auto-detected from git tags (defaults to `dev` if no tags exist). Override versions:
+Builds a private AMI in `us-east-2` with runner version `2.336.0` and the version auto-detected from git tags (defaults to `dev` if no tags exist). Override versions:
 
 ```bash
 make ami.build RUNNER_VERSION=2.335.0
@@ -108,7 +108,7 @@ make ami.validate
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `runner_version` | `2.332.0` | GitHub Actions runner version to pre-install |
+| `runner_version` | `2.336.0` | GitHub Actions runner version to pre-install |
 | `jit_runners_version` | `dev` | jit-runners project version (e.g. `v0.3.0`). Defaults to `dev` for local builds. Auto-detected from git tags in CI. |
 | `aws_region` | `us-east-2` | Region to build the AMI in |
 | `ami_regions` | `[]` | Additional regions to copy the AMI to |
@@ -170,7 +170,7 @@ sudo dnf install -y terraform
 
 ```bash
 cd infra/packer && packer build \
-  -var "runner_version=2.332.0" \
+  -var "runner_version=2.336.0" \
   -var "extra_script=scripts/my-custom-setup.sh" \
   .
 ```

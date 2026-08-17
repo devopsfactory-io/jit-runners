@@ -33,7 +33,7 @@ import (
 // leaves the ephemeral runner offline and the job stuck queued. Prefer
 // overriding via the RUNNER_VERSION env var (RunnerVersion CFN parameter) so
 // a deprecation can be addressed with a parameter-only deploy.
-const defaultRunnerVersion = "2.334.0"
+const defaultRunnerVersion = "2.336.0"
 
 // queueLister abstracts the listing call for testability. Production code
 // passes *github.Client which satisfies this interface.

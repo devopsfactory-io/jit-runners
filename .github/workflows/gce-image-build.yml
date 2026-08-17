@@ -5,7 +5,7 @@ on:
     inputs:
       runner_version:
         description: "GitHub Actions runner version"
-        default: "2.332.0"
+        default: "2.336.0"
         required: true
       go_version:
         description: "Go version to pre-install"
@@ -82,14 +82,14 @@ jobs:
         run: |
           packer validate -only=googlecompute.jit-runner \
             -var "gcp_project=$(gcloud config get-value project 2>/dev/null)" \
-            -var "runner_version=${{ inputs.runner_version || '2.332.0' }}" \
+            -var "runner_version=${{ inputs.runner_version || '2.336.0' }}" \
             .
 
       - name: Packer build
         working-directory: infra/packer
         run: |
           GCP_PROJECT="$(gcloud config get-value project 2>/dev/null)"
-          RUNNER_VERSION="${{ inputs.runner_version || '2.332.0' }}"
+          RUNNER_VERSION="${{ inputs.runner_version || '2.336.0' }}"
           GO_VERSION="${{ inputs.go_version || '1.23.6' }}"
           NODE_MAJOR="${{ inputs.node_major_version || '22' }}"
           JIT_VERSION="${{ steps.version.outputs.version }}"
@@ -124,7 +124,7 @@ jobs:
         working-directory: infra/packer
         run: |
           IMAGE_ID=$(jq -r '.builds[-1].artifact_id' manifest.json)
-          RUNNER_VERSION="${{ inputs.runner_version || '2.332.0' }}"
+          RUNNER_VERSION="${{ inputs.runner_version || '2.336.0' }}"
           JIT_VERSION="${{ steps.version.outputs.version }}"
 
           if [ "${{ github.event_name }}" = "pull_request" ]; then
