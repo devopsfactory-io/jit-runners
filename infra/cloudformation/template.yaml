@@ -537,6 +537,16 @@ Resources:
                   - dynamodb:GetItem
                   - dynamodb:UpdateItem
                 Resource: !GetAtt RunnersTable.Arn
+              # The lifecycle handler terminates the runner's instance on the
+              # 'completed' transition. Without this the call 403s on every
+              # completed job and cleanup falls through to scaledown's orphan
+              # sweep, leaving instances billing until MaxRunnerAgeMinutes.
+              # Mirrors the scaledown role's EC2 grant.
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:TerminateInstances
+                Resource: "*"
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: !Ref PrivateKeySecretArn
