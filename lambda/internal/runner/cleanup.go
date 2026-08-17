@@ -287,10 +287,21 @@ func (c *Cleaner) sweepOrphanInstances(ctx context.Context, now time.Time, resul
 	}
 	for _, inst := range instances {
 		rec, err := c.Store.GetByInstanceID(ctx, inst.ID)
+		// The instance-ID index only contains rows that already carry an
+		// InstanceID, which scaleup writes *after* the launch returns. A
+		// row whose post-launch bind never landed (throttled or timed-out
+		// update) is therefore absent from the index even though the
+		// runner is alive and may already have claimed a job. Terminating
+		// on that miss kills running jobs, so resolve the row by primary
+		// key through the instance's jit-runners-id tag before believing
+		// the instance is untracked.
+		if errors.Is(err, state.ErrNotFound) && inst.RunnerID != "" {
+			rec, err = c.Store.Get(ctx, inst.RunnerID)
+		}
 		switch {
 		case errors.Is(err, state.ErrNotFound):
-			log.Printf("orphan sweep: terminating %s (no DDB row, age=%s)",
-				inst.ID, now.Sub(inst.LaunchedAt))
+			log.Printf("orphan sweep: terminating %s (no record by instance-id or tag %q, age=%s)",
+				inst.ID, inst.RunnerID, now.Sub(inst.LaunchedAt))
 			if termErr := c.Launcher.Terminate(ctx, []string{inst.ID}); termErr != nil {
 				log.Printf("orphan sweep: terminate %s failed: %v", inst.ID, termErr)
 				result.Errors++

@@ -713,3 +713,105 @@ func TestSweepOrphanInstances_RecentlyLaunched_DoesNotTerminate(t *testing.T) {
 // scaleupPublisher interface remains compatible with state.RunnerUpdate
 // usage in cleanup.go. It exists only to surface signature drift early.
 var _ = state.RunnerUpdate{}
+
+// TestSweepOrphanInstances_TagFallback covers the instance-ID index blind
+// spot: scaleup writes the record before launching and binds InstanceID only
+// after RunInstances returns, so a throttled or timed-out bind leaves a live
+// runner with a record that the index cannot see. The sweep must resolve such
+// rows by primary key through the instance's jit-runners-id tag instead of
+// terminating a runner that may already be executing a job.
+func TestSweepOrphanInstances_TagFallback(t *testing.T) {
+	now := time.Now()
+	stale := now.Add(-10 * time.Minute)
+
+	tests := []struct {
+		name          string
+		seed          *state.Runner // record to Put, nil for none
+		instRunnerID  string        // jit-runners-id tag on the instance
+		wantTerminate bool
+	}{
+		{
+			name:          "unbound record pending, tag resolves it",
+			seed:          &state.Runner{ID: "r-1", Status: state.StatusPending},
+			instRunnerID:  "r-1",
+			wantTerminate: false,
+		},
+		{
+			name:          "unbound record running, tag resolves it",
+			seed:          &state.Runner{ID: "r-2", Status: state.StatusRunning},
+			instRunnerID:  "r-2",
+			wantTerminate: false,
+		},
+		{
+			name:          "bound record still resolves via index",
+			seed:          &state.Runner{ID: "r-3", InstanceID: "i-live", Status: state.StatusRunning},
+			instRunnerID:  "r-3",
+			wantTerminate: false,
+		},
+		{
+			name:          "unbound record completed is terminal",
+			seed:          &state.Runner{ID: "r-4", Status: state.StatusCompleted},
+			instRunnerID:  "r-4",
+			wantTerminate: true,
+		},
+		{
+			name:          "unbound record failed is terminal",
+			seed:          &state.Runner{ID: "r-5", Status: state.StatusFailed},
+			instRunnerID:  "r-5",
+			wantTerminate: true,
+		},
+		{
+			name:          "tag present but no record at that key",
+			seed:          nil,
+			instRunnerID:  "r-absent",
+			wantTerminate: true,
+		},
+		{
+			name:          "no tag and no record stays terminable",
+			seed:          nil,
+			instRunnerID:  "",
+			wantTerminate: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := memstore.New()
+			if tt.seed != nil {
+				if err := store.Put(ctx, *tt.seed); err != nil {
+					t.Fatalf("seed Put: %v", err)
+				}
+			}
+			launcher := &fakeLauncher{
+				listResult: []compute.Instance{
+					{ID: "i-live", LaunchedAt: stale, RunnerID: tt.instRunnerID},
+				},
+			}
+			c := &Cleaner{
+				Store:              store,
+				Launcher:           launcher,
+				OrphanGraceMinutes: 5 * time.Minute,
+				Now:                func() time.Time { return now },
+			}
+			result := &CleanupResult{}
+			c.sweepOrphanInstances(ctx, now, result)
+
+			terminated := len(launcher.terminated) > 0
+			if terminated != tt.wantTerminate {
+				t.Errorf("terminated = %v (%v), want %v",
+					terminated, launcher.terminated, tt.wantTerminate)
+			}
+			wantOrphans := 0
+			if tt.wantTerminate {
+				wantOrphans = 1
+			}
+			if result.EC2Orphans != wantOrphans {
+				t.Errorf("EC2Orphans = %d, want %d", result.EC2Orphans, wantOrphans)
+			}
+			if result.Errors != 0 {
+				t.Errorf("Errors = %d, want 0", result.Errors)
+			}
+		})
+	}
+}
