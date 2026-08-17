@@ -428,6 +428,19 @@ resource "aws_iam_role_policy" "lifecycle_lambda" {
         ]
         Resource = aws_dynamodb_table.runners.arn
       },
+      # The lifecycle handler terminates the runner's instance on the
+      # 'completed' transition. Without this the call 403s on every completed
+      # job and cleanup falls through to scaledown's orphan sweep, leaving
+      # instances billing until max_runner_age_minutes. Mirrors the scaledown
+      # role's EC2 grant.
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeInstances",
+          "ec2:TerminateInstances",
+        ]
+        Resource = "*"
+      },
       {
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
