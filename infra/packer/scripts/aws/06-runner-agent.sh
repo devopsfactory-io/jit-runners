@@ -3,7 +3,7 @@ set -euo pipefail
 
 # jit-runners: GitHub Actions runner agent download and setup.
 
-RUNNER_VERSION="${RUNNER_VERSION:-2.332.0}"
+RUNNER_VERSION="${RUNNER_VERSION:-2.336.0}"
 
 echo "=== jit-runners: creating runner user ==="
 sudo useradd -m -s /bin/bash runner || true

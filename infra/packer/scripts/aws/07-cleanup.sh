@@ -3,7 +3,7 @@ set -euo pipefail
 
 # jit-runners: Post-provisioning cleanup, manifest generation, and marker file.
 
-RUNNER_VERSION="${RUNNER_VERSION:-2.332.0}"
+RUNNER_VERSION="${RUNNER_VERSION:-2.336.0}"
 JIT_RUNNERS_VERSION="${JIT_RUNNERS_VERSION:-dev}"
 
 echo "=== jit-runners: cleaning up ==="

@@ -61,7 +61,7 @@ Parameters:
 
   RunnerVersion:
     Type: String
-    Default: 2.334.0
+    Default: 2.336.0
     Description: >-
       GitHub Actions runner version the ephemeral runners register with. Keep
       current — GitHub deprecates old versions and refuses to dispatch jobs to

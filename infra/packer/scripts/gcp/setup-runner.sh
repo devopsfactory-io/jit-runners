@@ -6,7 +6,7 @@ set -euo pipefail
 # image with an ubuntu-latest-like toolchain on Ubuntu 24.04 LTS.
 #
 # Environment variables (set by Packer):
-#   RUNNER_VERSION       — GitHub Actions runner version (default: 2.332.0)
+#   RUNNER_VERSION       — GitHub Actions runner version (default: 2.336.0)
 #   GO_VERSION           — Go version to install (default: 1.23.6)
 #   NODE_MAJOR           — Node.js major version / LTS (default: 22)
 #   JIT_RUNNERS_VERSION  — jit-runners project version (default: dev)
