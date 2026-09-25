@@ -173,7 +173,7 @@ Both the CloudFormation template and the Terraform module ship with the followin
 | nano | t3a.nano | t3a.nano, t3.nano, t3a.micro, t3.micro |
 | micro | t3a.micro | t3a.micro, t3.micro, t3a.small, t3.small |
 | small | t3a.small | t3a.small, t3.small, t3a.medium, t3.medium |
-| medium | t3.medium | t3.medium, t3a.medium, m6i.large, m5.large |
+| medium | c6i.large | c6i.large, c5.large, c5a.large, m6i.large |
 | large | c6i.xlarge | c6i.xlarge, c5.xlarge, c5a.xlarge, m6i.xlarge |
 | release | m5.xlarge | m5.xlarge, m5a.xlarge, m6i.xlarge, m6a.xlarge |
 
