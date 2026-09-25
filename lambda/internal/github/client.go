@@ -121,10 +121,13 @@ type QueuedJob struct {
 	Labels []string `json:"labels"`
 }
 
+// runRef is the minimal shape needed from a workflow_runs list entry.
+type runRef struct {
+	ID int64 `json:"id"`
+}
+
 type listRunsResponse struct {
-	WorkflowRuns []struct {
-		ID int64 `json:"id"`
-	} `json:"workflow_runs"`
+	WorkflowRuns []runRef `json:"workflow_runs"`
 }
 
 type listJobsResponse struct {
@@ -208,11 +211,11 @@ func (c *Client) DeregisterRunner(ctx context.Context, ownerRepo string, runnerI
 }
 
 // ListQueuedWorkflowJobs returns all workflow_jobs currently in `queued`
-// status across the repo. Implementation: list workflow runs filtered to
-// status=queued, then per-run list jobs and filter to status=queued.
-// Pagination is requested at per_page=100 (workflows seldom exceed 100
-// queued jobs at once; if needed, callers iterate via the periodic
-// rebalancer cycle which re-queries each minute).
+// status across the repo. Implementation: list workflow runs whose top-level
+// status is one that can still contain a queued job, then per-run list jobs
+// and filter to status=queued. Pagination is requested at per_page=100
+// (workflows seldom exceed 100 queued jobs at once; if needed, callers
+// iterate via the periodic rebalancer cycle which re-queries each minute).
 func (c *Client) ListQueuedWorkflowJobs(ctx context.Context, ownerRepo string) ([]QueuedJob, error) {
 	runs, err := c.listQueuedRuns(ctx, ownerRepo)
 	if err != nil {
@@ -233,10 +236,37 @@ func (c *Client) ListQueuedWorkflowJobs(ctx context.Context, ownerRepo string) (
 	return queued, nil
 }
 
-func (c *Client) listQueuedRuns(ctx context.Context, ownerRepo string) ([]struct {
-	ID int64 `json:"id"`
-}, error) {
-	url := fmt.Sprintf("%s/repos/%s/actions/runs?status=queued&per_page=100", c.baseURL, ownerRepo)
+// runStatusesWithPossibleQueuedJobs are the top-level GitHub workflow-run
+// statuses queried when looking for queued jobs. "queued" is documented by
+// GitHub as an alias covering queued/requested/waiting runs. "pending" is a
+// distinct status — observed on a run queued behind a `concurrency:` group —
+// whose jobs are otherwise invisible to a bare status=queued filter, which
+// silently starved both scaleup's demand-aware launch decision and the
+// rebalancer's drift-recovery cycle (they share this query). See
+// devopsfactory-io/jit-runners#104.
+var runStatusesWithPossibleQueuedJobs = []string{"queued", "pending"}
+
+func (c *Client) listQueuedRuns(ctx context.Context, ownerRepo string) ([]runRef, error) {
+	seen := make(map[int64]bool)
+	var all []runRef
+	for _, status := range runStatusesWithPossibleQueuedJobs {
+		runs, err := c.runsWithStatus(ctx, ownerRepo, status)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range runs {
+			if seen[r.ID] {
+				continue
+			}
+			seen[r.ID] = true
+			all = append(all, r)
+		}
+	}
+	return all, nil
+}
+
+func (c *Client) runsWithStatus(ctx context.Context, ownerRepo, status string) ([]runRef, error) {
+	url := fmt.Sprintf("%s/repos/%s/actions/runs?status=%s&per_page=100", c.baseURL, ownerRepo, status)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -246,15 +276,15 @@ func (c *Client) listQueuedRuns(ctx context.Context, ownerRepo string) ([]struct
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	resp, err := c.httpClient.Do(req) //nolint:gosec // G704
 	if err != nil {
-		return nil, fmt.Errorf("github: list queued runs: %w", err)
+		return nil, fmt.Errorf("github: list %s runs: %w", status, err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("github: list queued runs: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("github: list %s runs: status %d", status, resp.StatusCode)
 	}
 	var body listRunsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return nil, fmt.Errorf("github: list queued runs decode: %w", err)
+		return nil, fmt.Errorf("github: list %s runs decode: %w", status, err)
 	}
 	return body.WorkflowRuns, nil
 }

@@ -178,4 +178,75 @@ func TestListQueuedWorkflowJobs(t *testing.T) {
 			t.Fatal("expected error on 429, got nil")
 		}
 	})
+
+	// devopsfactory-io/jit-runners#104: a run queued behind a concurrency
+	// group (or otherwise not yet dispatched) can report top-level status
+	// "pending" while one of its jobs is genuinely status=queued. A bare
+	// status=queued filter on /actions/runs misses that run entirely, so
+	// the job was invisible to both scaleup's demand check and the
+	// rebalancer's drift-recovery cycle (both call ListQueuedWorkflowJobs).
+	t.Run("run with pending status still surfaces its queued job", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/repos/owner/repo/actions/runs":
+				switch r.URL.Query().Get("status") {
+				case "queued":
+					_, _ = w.Write([]byte(`{"total_count":0,"workflow_runs":[]}`))
+				case "pending":
+					_, _ = w.Write([]byte(`{"total_count":1,"workflow_runs":[{"id":222}]}`))
+				default:
+					t.Fatalf("unexpected status filter: %q", r.URL.Query().Get("status"))
+				}
+			case "/repos/owner/repo/actions/runs/222/jobs":
+				_, _ = w.Write([]byte(`{"total_count":1,"jobs":[
+				 {"id":2001,"run_id":222,"status":"queued","labels":["self-hosted","nano"]}
+				]}`))
+			default:
+				t.Fatalf("unexpected path: %s", r.URL.Path)
+			}
+		}))
+		defer srv.Close()
+
+		c := NewClientWithBase("test-token", srv.URL)
+		got, err := c.ListQueuedWorkflowJobs(context.Background(), "owner/repo")
+		if err != nil {
+			t.Fatalf("ListQueuedWorkflowJobs: %v", err)
+		}
+		if len(got) != 1 || got[0].JobID != 2001 {
+			t.Errorf("expected job 2001 from the pending-status run, got %+v", got)
+		}
+	})
+
+	// A run can in principle show up under both status filters in the same
+	// call (e.g. GitHub's queued/requested/waiting alias overlapping with a
+	// transitioning run) — the run's jobs must only be fetched once.
+	t.Run("run returned by both status filters is only fetched once", func(t *testing.T) {
+		jobsCalls := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/repos/owner/repo/actions/runs":
+				_, _ = w.Write([]byte(`{"total_count":1,"workflow_runs":[{"id":333}]}`))
+			case "/repos/owner/repo/actions/runs/333/jobs":
+				jobsCalls++
+				_, _ = w.Write([]byte(`{"total_count":1,"jobs":[
+				 {"id":3001,"run_id":333,"status":"queued","labels":["self-hosted","large"]}
+				]}`))
+			default:
+				t.Fatalf("unexpected path: %s", r.URL.Path)
+			}
+		}))
+		defer srv.Close()
+
+		c := NewClientWithBase("test-token", srv.URL)
+		got, err := c.ListQueuedWorkflowJobs(context.Background(), "owner/repo")
+		if err != nil {
+			t.Fatalf("ListQueuedWorkflowJobs: %v", err)
+		}
+		if len(got) != 1 {
+			t.Errorf("expected 1 deduped job, got %d: %+v", len(got), got)
+		}
+		if jobsCalls != 1 {
+			t.Errorf("expected the jobs endpoint to be called once (deduped run), got %d calls", jobsCalls)
+		}
+	})
 }
