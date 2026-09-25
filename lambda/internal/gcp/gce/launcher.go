@@ -240,6 +240,58 @@ func (l *Launcher) ListStale(ctx context.Context, threshold time.Duration) ([]co
 	return result, nil
 }
 
+// gceLiveStatuses are the GCE instance statuses considered "alive" for
+// LiveInstanceIDs purposes: the VM either is running or is still on its way
+// up. STOPPING, STOPPED, SUSPENDING, SUSPENDED, and TERMINATED are not live —
+// none of those states can still pick up a queued job.
+var gceLiveStatuses = map[string]bool{
+	"PROVISIONING": true,
+	"STAGING":      true,
+	"RUNNING":      true,
+}
+
+// LiveInstanceIDs implements compute.Launcher. gceAPI has no per-ID Get, so
+// this reuses the same managed-by aggregated-list enumeration as ListStale
+// (with no age cutoff) and intersects client-side with the requested ids —
+// fleet size makes this cheap, and it avoids building a name-OR filter
+// expression by hand.
+func (l *Launcher) LiveInstanceIDs(ctx context.Context, ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return []string{}, nil
+	}
+	want := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+
+	filter := fmt.Sprintf("labels.%s=%s", labelManagedBy, labelManagedVal)
+	iter := l.api.AggregatedList(ctx, &cpb.AggregatedListInstancesRequest{
+		Project: l.opts.Project,
+		Filter:  &filter,
+	})
+
+	live := make([]string, 0, len(ids))
+	for {
+		pair, err := iter.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("gcp/gce: aggregated list: %w", err)
+		}
+		if pair.Value == nil {
+			continue
+		}
+		for _, inst := range pair.Value.GetInstances() {
+			name := inst.GetName()
+			if want[name] && gceLiveStatuses[inst.GetStatus()] {
+				live = append(live, name)
+			}
+		}
+	}
+	return live, nil
+}
+
 // parseTimestamp parses a GCE creation timestamp (RFC3339) into a time.Time.
 // Returns zero time on error.
 func parseTimestamp(s string) time.Time {

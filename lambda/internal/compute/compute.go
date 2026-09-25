@@ -38,4 +38,15 @@ type Launcher interface {
 	Launch(ctx context.Context, spec LaunchSpec) (Instance, error)
 	Terminate(ctx context.Context, ids []string) error
 	ListStale(ctx context.Context, threshold time.Duration) ([]Instance, error)
+	// LiveInstanceIDs returns the subset of ids that are still in a
+	// cloud-side "alive" state (AWS: running/pending; GCP:
+	// running/provisioning/staging) — i.e. not yet terminated, stopped, or
+	// (AWS) reclaimed by spot. Used by scaleup's demand-aware supply check
+	// so a pending state-store record whose underlying instance has
+	// already been reclaimed does not count as live capacity for a retry
+	// (see devopsfactory-io/jit-runners#105). Empty input returns an
+	// empty, non-nil slice. Implementations should treat "instance
+	// unknown to the cloud API" as not live rather than erroring, since a
+	// reclaimed spot instance can age out of describe-by-ID visibility.
+	LiveInstanceIDs(ctx context.Context, ids []string) ([]string, error)
 }

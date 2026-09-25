@@ -135,7 +135,7 @@ func processRecord(ctx context.Context, cfg *appconfig.Config, b *provider.Bundl
 	// no future reader assumes a binding to job_id or workflow_run_id.
 	ghClient := github.NewClient(token)
 
-	launch, err := shouldLaunch(ctx, ghClient, b.State, msg)
+	launch, err := shouldLaunch(ctx, ghClient, b.State, b.Compute, msg)
 	if err != nil {
 		return fmt.Errorf("scaleup decision: %w", err)
 	}
@@ -310,7 +310,7 @@ func resolveAMI(cfg *appconfig.Config, labels []string) string {
 //
 // On the webhook path, an empty Source is treated as SourceWebhook for
 // backwards compat with in-flight messages at deploy time.
-func shouldLaunch(ctx context.Context, gh queueLister, store state.RunnerStore, msg *queue.ScaleUpMessage) (bool, error) {
+func shouldLaunch(ctx context.Context, gh queueLister, store state.RunnerStore, launcher compute.Launcher, msg *queue.ScaleUpMessage) (bool, error) {
 	if msg.Source == queue.SourceRebalancer {
 		return true, nil
 	}
@@ -330,14 +330,52 @@ func shouldLaunch(ctx context.Context, gh queueLister, store state.RunnerStore, 
 	if err != nil {
 		return false, fmt.Errorf("scaleup: list pending runners: %w", err)
 	}
-	supply := 0
+	var matching []state.Runner
 	for _, r := range pending {
 		if state.MatchesLabels(r.Labels, msg.Labels) {
-			supply++
+			matching = append(matching, r)
 		}
 	}
+	supply := countLiveSupply(ctx, launcher, matching)
 
 	return demand > supply, nil
+}
+
+// countLiveSupply counts label-matching pending records as supply only if
+// their underlying instance is still cloud-side alive. A record whose
+// instance was already reclaimed (e.g. AWS spot instance-terminated-no-capacity,
+// issue #105) must not count — otherwise a retry for the same job rides the
+// same doomed instance to a second failure instead of getting a fresh
+// launch. Records with no InstanceID yet (the brief window between the
+// pending-record write and Launch returning) always count as supply — there
+// is nothing to check yet, and treating them as absent would double-launch
+// for a job that already has a launch in flight.
+//
+// A LiveInstanceIDs error is treated conservatively as "none of the checked
+// instances are live": worst case is one extra runner that finds no queued
+// job and self-terminates (docs/troubleshooting.md #6, cheap and expected);
+// the alternative — treating a liveness-check failure as "still live" —
+// reproduces the exact bug this exists to fix, where a job waits on supply
+// that no longer exists.
+func countLiveSupply(ctx context.Context, launcher compute.Launcher, matching []state.Runner) int {
+	supply := 0
+	var idsToCheck []string
+	for _, r := range matching {
+		if r.InstanceID == "" {
+			supply++
+			continue
+		}
+		idsToCheck = append(idsToCheck, r.InstanceID)
+	}
+	if len(idsToCheck) == 0 {
+		return supply
+	}
+	live, err := launcher.LiveInstanceIDs(ctx, idsToCheck)
+	if err != nil {
+		log.Printf("scaleup: liveness check failed for %d pending instance(s), treating as not live: %v", len(idsToCheck), err)
+		return supply
+	}
+	return supply + len(live)
 }
 
 func loadConfig(ctx context.Context) (*appconfig.Config, error) {

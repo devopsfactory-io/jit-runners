@@ -41,6 +41,9 @@ func (fakeLauncher) Terminate(_ context.Context, _ []string) error { return nil 
 func (fakeLauncher) ListStale(_ context.Context, _ time.Duration) ([]compute.Instance, error) {
 	return nil, nil
 }
+func (fakeLauncher) LiveInstanceIDs(_ context.Context, ids []string) ([]string, error) {
+	return ids, nil
+}
 
 func newHandler(store state.RunnerStore, gh *fakeGitHub) *lifecycle.Handler {
 	return lifecycle.New(store, gh, fakeLauncher{}, log.New(os.Stderr, "test ", 0))
