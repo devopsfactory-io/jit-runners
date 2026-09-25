@@ -23,6 +23,10 @@ type call struct {
 type fakeEC2 struct {
 	errs  []error
 	calls []call
+
+	describeInput *awsec2.DescribeInstancesInput
+	describeOut   *awsec2.DescribeInstancesOutput
+	describeErr   error
 }
 
 func (f *fakeEC2) RunInstances(_ context.Context, in *awsec2.RunInstancesInput, _ ...func(*awsec2.Options)) (*awsec2.RunInstancesOutput, error) {
@@ -48,7 +52,14 @@ func (f *fakeEC2) RunInstances(_ context.Context, in *awsec2.RunInstancesInput, 
 func (f *fakeEC2) TerminateInstances(context.Context, *awsec2.TerminateInstancesInput, ...func(*awsec2.Options)) (*awsec2.TerminateInstancesOutput, error) {
 	return &awsec2.TerminateInstancesOutput{}, nil
 }
-func (f *fakeEC2) DescribeInstances(context.Context, *awsec2.DescribeInstancesInput, ...func(*awsec2.Options)) (*awsec2.DescribeInstancesOutput, error) {
+func (f *fakeEC2) DescribeInstances(_ context.Context, in *awsec2.DescribeInstancesInput, _ ...func(*awsec2.Options)) (*awsec2.DescribeInstancesOutput, error) {
+	f.describeInput = in
+	if f.describeErr != nil {
+		return nil, f.describeErr
+	}
+	if f.describeOut != nil {
+		return f.describeOut, nil
+	}
 	return &awsec2.DescribeInstancesOutput{}, nil
 }
 
@@ -241,4 +252,63 @@ func TestRotate(t *testing.T) {
 	if len(seen) < 2 {
 		t.Errorf("rotate did not spread across subnets: only start %v seen", seen)
 	}
+}
+
+func TestLiveInstanceIDs(t *testing.T) {
+	t.Run("empty input short-circuits without a call", func(t *testing.T) {
+		c := &fakeEC2{}
+		l := NewLauncher(c, LauncherOptions{})
+		got, err := l.LiveInstanceIDs(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("LiveInstanceIDs: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("got %v, want empty", got)
+		}
+		if c.describeInput != nil {
+			t.Error("expected no DescribeInstances call for empty input")
+		}
+	})
+
+	t.Run("filters to running/pending, requests only the given ids", func(t *testing.T) {
+		c := &fakeEC2{describeOut: &awsec2.DescribeInstancesOutput{
+			Reservations: []types.Reservation{{
+				Instances: []types.Instance{{InstanceId: aws.String("i-live")}},
+			}},
+		}}
+		l := NewLauncher(c, LauncherOptions{})
+		got, err := l.LiveInstanceIDs(context.Background(), []string{"i-live", "i-dead"})
+		if err != nil {
+			t.Fatalf("LiveInstanceIDs: %v", err)
+		}
+		if !slices.Equal(got, []string{"i-live"}) {
+			t.Errorf("got %v, want [i-live] (i-dead reclaimed, filtered by EC2's state-name filter server-side)", got)
+		}
+		if !slices.Equal(c.describeInput.InstanceIds, []string{"i-live", "i-dead"}) {
+			t.Errorf("DescribeInstances requested ids = %v, want the full input list", c.describeInput.InstanceIds)
+		}
+		if len(c.describeInput.Filters) != 1 || aws.ToString(c.describeInput.Filters[0].Name) != "instance-state-name" {
+			t.Errorf("expected an instance-state-name filter, got %+v", c.describeInput.Filters)
+		}
+	})
+
+	t.Run("InvalidInstanceID.NotFound treated as none live, not an error", func(t *testing.T) {
+		c := &fakeEC2{describeErr: apiErr("InvalidInstanceID.NotFound")}
+		l := NewLauncher(c, LauncherOptions{})
+		got, err := l.LiveInstanceIDs(context.Background(), []string{"i-aged-out"})
+		if err != nil {
+			t.Fatalf("LiveInstanceIDs: expected nil error for NotFound, got %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("got %v, want empty", got)
+		}
+	})
+
+	t.Run("other errors propagate", func(t *testing.T) {
+		c := &fakeEC2{describeErr: apiErr("RequestLimitExceeded")}
+		l := NewLauncher(c, LauncherOptions{})
+		if _, err := l.LiveInstanceIDs(context.Background(), []string{"i-x"}); err == nil {
+			t.Fatal("expected error to propagate for a non-NotFound API error")
+		}
+	})
 }

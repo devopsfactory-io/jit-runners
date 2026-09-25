@@ -287,6 +287,46 @@ func (l *Launcher) ListStale(ctx context.Context, threshold time.Duration) ([]co
 	return instances, nil
 }
 
+// LiveInstanceIDs implements compute.Launcher. It reports which of the given
+// instance IDs are still "running" or "pending" in EC2. A spot instance
+// reclaimed by AWS (e.g. instance-terminated-no-capacity) moves to
+// "terminated" well before it ages out of describe-by-ID visibility, so this
+// is enough to detect reclamation without needing spot-request status codes.
+func (l *Launcher) LiveInstanceIDs(ctx context.Context, ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return []string{}, nil
+	}
+	out, err := l.client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		InstanceIds: ids,
+		Filters: []types.Filter{
+			{
+				Name:   aws.String("instance-state-name"),
+				Values: []string{"running", "pending"},
+			},
+		},
+	})
+	if err != nil {
+		// DescribeInstances errors the whole call (InvalidInstanceID.NotFound)
+		// if EC2 has no record at all for one of the requested IDs — this can
+		// happen once a reclaimed spot instance ages out of the API's
+		// describe-by-ID window. Treat that as "none of the requested IDs are
+		// live" rather than failing the caller's supply computation: an
+		// unknown instance is definitionally not live capacity.
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) && strings.HasPrefix(apiErr.ErrorCode(), "InvalidInstanceID") {
+			return []string{}, nil
+		}
+		return nil, fmt.Errorf("describe instances: %w", err)
+	}
+	live := make([]string, 0, len(ids))
+	for _, res := range out.Reservations {
+		for _, inst := range res.Instances {
+			live = append(live, aws.ToString(inst.InstanceId))
+		}
+	}
+	return live, nil
+}
+
 func tagValue(tags []types.Tag, key string) string {
 	for _, t := range tags {
 		if aws.ToString(t.Key) == key {

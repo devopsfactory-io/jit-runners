@@ -174,7 +174,7 @@ Both the CloudFormation template and the Terraform module ship with the followin
 | micro | t3a.micro | t3a.micro, t3.micro, t3a.small, t3.small |
 | small | t3a.small | t3a.small, t3.small, t3a.medium, t3.medium |
 | medium | c6i.large | c6i.large, c5.large, c5a.large, m6i.large |
-| large | c6i.xlarge | c6i.xlarge, c5.xlarge, c5a.xlarge, m6i.xlarge |
+| large | c6i.xlarge | c6i.xlarge, c5.xlarge, c5a.xlarge, m6i.xlarge, c6a.xlarge |
 | release | m5.xlarge | m5.xlarge, m5a.xlarge, m6i.xlarge, m6a.xlarge |
 
 The `release` label is intended for release workflows that benefit from spot diversification across stable, low-interruption families:

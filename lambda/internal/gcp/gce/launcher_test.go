@@ -239,3 +239,51 @@ func TestLauncher_ListStale_FiltersByLaunchTime(t *testing.T) {
 func proto(s string) *string {
 	return &s
 }
+
+func TestLiveInstanceIDs(t *testing.T) {
+	t.Run("empty input short-circuits without a call", func(t *testing.T) {
+		fake := &fakeGCE{}
+		launcher := newLauncherWithAPI(fake, defaultOpts())
+		got, err := launcher.LiveInstanceIDs(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("LiveInstanceIDs: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("got %v, want empty", got)
+		}
+	})
+
+	t.Run("only requested, running/staging/provisioning instances are live", func(t *testing.T) {
+		ts := time.Now().Format(time.RFC3339)
+		pairs := []gcpcompute.InstancesScopedListPair{
+			{
+				Key: "zones/us-central1-a",
+				Value: &cpb.InstancesScopedList{
+					Instances: []*cpb.Instance{
+						{Name: proto("running-runner"), Status: proto("RUNNING"), CreationTimestamp: &ts, Labels: map[string]string{labelManagedBy: labelManagedVal}},
+						{Name: proto("terminated-runner"), Status: proto("TERMINATED"), CreationTimestamp: &ts, Labels: map[string]string{labelManagedBy: labelManagedVal}},
+						{Name: proto("not-requested"), Status: proto("RUNNING"), CreationTimestamp: &ts, Labels: map[string]string{labelManagedBy: labelManagedVal}},
+					},
+				},
+			},
+		}
+		fake := &fakeGCE{listPairs: pairs}
+		launcher := newLauncherWithAPI(fake, defaultOpts())
+
+		got, err := launcher.LiveInstanceIDs(context.Background(), []string{"running-runner", "terminated-runner", "missing-runner"})
+		if err != nil {
+			t.Fatalf("LiveInstanceIDs: %v", err)
+		}
+		if len(got) != 1 || got[0] != "running-runner" {
+			t.Errorf("got %v, want [running-runner] (terminated excluded, not-requested excluded, missing-runner absent from API results)", got)
+		}
+	})
+
+	t.Run("iterator error propagates", func(t *testing.T) {
+		fake := &fakeGCE{listErr: errors.New("aggregated list failed")}
+		launcher := newLauncherWithAPI(fake, defaultOpts())
+		if _, err := launcher.LiveInstanceIDs(context.Background(), []string{"i-x"}); err == nil {
+			t.Fatal("expected error to propagate")
+		}
+	})
+}

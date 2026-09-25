@@ -97,6 +97,10 @@ func (f *fakeLauncher) ListStale(_ context.Context, _ time.Duration) ([]compute.
 	return f.listResult, nil
 }
 
+func (f *fakeLauncher) LiveInstanceIDs(_ context.Context, ids []string) ([]string, error) {
+	return ids, nil
+}
+
 // fakeGitHub records DeregisterRunner calls and may inject an error.
 type fakeGitHub struct {
 	calls []deregCall

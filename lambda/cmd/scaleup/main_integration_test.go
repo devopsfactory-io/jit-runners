@@ -28,6 +28,12 @@ type fakeLauncher struct {
 	launches     []compute.LaunchSpec
 	terminateErr error
 	terminated   [][]string
+
+	// notLive holds instance IDs LiveInstanceIDs should report as dead
+	// (e.g. reclaimed by spot). IDs not in this set are reported live.
+	// liveErr, if set, makes LiveInstanceIDs return an error instead.
+	notLive map[string]bool
+	liveErr error
 }
 
 func (f *fakeLauncher) Launch(_ context.Context, spec compute.LaunchSpec) (compute.Instance, error) {
@@ -45,6 +51,19 @@ func (f *fakeLauncher) Terminate(_ context.Context, ids []string) error {
 
 func (f *fakeLauncher) ListStale(_ context.Context, _ time.Duration) ([]compute.Instance, error) {
 	return nil, nil
+}
+
+func (f *fakeLauncher) LiveInstanceIDs(_ context.Context, ids []string) ([]string, error) {
+	if f.liveErr != nil {
+		return nil, f.liveErr
+	}
+	live := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !f.notLive[id] {
+			live = append(live, id)
+		}
+	}
+	return live, nil
 }
 
 // errorOnUpdateStore wraps a real RunnerStore and forces Update to error.
@@ -143,6 +162,7 @@ func TestShouldLaunch(t *testing.T) {
 		queued    []github.QueuedJob
 		pending   []state.Runner
 		msgLabels []string
+		launcher  *fakeLauncher // nil = default fakeLauncher (all instances live)
 		want      bool
 		wantErr   bool
 	}{
@@ -213,6 +233,54 @@ func TestShouldLaunch(t *testing.T) {
 			msgLabels: []string{"self-hosted", "large"},
 			wantErr:   true,
 		},
+		{
+			// devopsfactory-io/jit-runners#105: a pending record's instance
+			// was reclaimed (AWS spot instance-terminated-no-capacity) after
+			// the record was written but before the retry's demand check
+			// ran. Without a liveness check this looks identical to "demand
+			// == supply" and skips — the retry then waits on an instance
+			// that will never pick up the job. It must count as no supply
+			// and launch fresh capacity instead.
+			name:      "pending record with reclaimed instance does not count as supply",
+			source:    queue.SourceWebhook,
+			queued:    []github.QueuedJob{{JobID: 1, Status: "queued", Labels: []string{"self-hosted", "large"}}},
+			pending:   []state.Runner{{ID: "1", Status: state.StatusPending, Labels: []string{"self-hosted", "large"}, InstanceID: "i-reclaimed"}},
+			msgLabels: []string{"self-hosted", "large"},
+			launcher:  &fakeLauncher{notLive: map[string]bool{"i-reclaimed": true}},
+			want:      true,
+		},
+		{
+			name:      "pending record with live instance still counts as supply",
+			source:    queue.SourceWebhook,
+			queued:    []github.QueuedJob{{JobID: 1, Status: "queued", Labels: []string{"self-hosted", "large"}}},
+			pending:   []state.Runner{{ID: "1", Status: state.StatusPending, Labels: []string{"self-hosted", "large"}, InstanceID: "i-alive"}},
+			msgLabels: []string{"self-hosted", "large"},
+			launcher:  &fakeLauncher{},
+			want:      false,
+		},
+		{
+			// A record written just before Launch returns has no InstanceID
+			// yet — there's nothing to check, and it must still count so a
+			// second webhook delivery for the same job doesn't double-launch.
+			name:      "pending record with no InstanceID yet always counts as supply",
+			source:    queue.SourceWebhook,
+			queued:    []github.QueuedJob{{JobID: 1, Status: "queued", Labels: []string{"self-hosted", "large"}}},
+			pending:   []state.Runner{{ID: "1", Status: state.StatusPending, Labels: []string{"self-hosted", "large"}}},
+			msgLabels: []string{"self-hosted", "large"},
+			launcher:  &fakeLauncher{notLive: map[string]bool{"anything": true}},
+			want:      false,
+		},
+		{
+			// A liveness-check failure must fail toward "not live" (launch),
+			// not toward "still live" (skip) — see countLiveSupply doc comment.
+			name:      "liveness check error treated as not live, launches",
+			source:    queue.SourceWebhook,
+			queued:    []github.QueuedJob{{JobID: 1, Status: "queued", Labels: []string{"self-hosted", "large"}}},
+			pending:   []state.Runner{{ID: "1", Status: state.StatusPending, Labels: []string{"self-hosted", "large"}, InstanceID: "i-unknown"}},
+			msgLabels: []string{"self-hosted", "large"},
+			launcher:  &fakeLauncher{liveErr: errors.New("describe instances: throttled")},
+			want:      true,
+		},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -233,7 +301,11 @@ func TestShouldLaunch(t *testing.T) {
 				Labels:         tc.msgLabels,
 				RepositoryFull: "owner/repo",
 			}
-			got, err := shouldLaunch(ctx, gh, store, msg)
+			launcher := tc.launcher
+			if launcher == nil {
+				launcher = &fakeLauncher{}
+			}
+			got, err := shouldLaunch(ctx, gh, store, launcher, msg)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
 			}
